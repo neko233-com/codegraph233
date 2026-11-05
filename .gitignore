@@ -1,0 +1,14 @@
+# build output
+/dist/
+*.exe
+
+# local index data (never commit)
+/.game-project-graph/
+index.db
+index.db-wal
+index.db-shm
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
