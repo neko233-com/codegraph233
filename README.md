@@ -10,7 +10,7 @@
 
 | 能力域 | 内容 |
 | --- | --- |
-| 代码语义图 | 跨文件类型/成员/调用/构造/引用/继承，边带 `exact` / `type` / `name` 置信度；Go 后端跨包解析与结构体嵌入 |
+| 代码语义图 | 跨文件类型/成员/调用/构造/引用/继承 + **类型依赖（`type_uses`，C# 成员/参数/返回/泛型实参）**，边带 `exact` / `type` / `name` 置信度；Go 后端跨包解析与结构体嵌入 |
 | 游戏数据图 | prefab/scene 的 GameObject 层级、`m_Script`、嵌套 prefab、资源 guid；ShaderLab 的 property/pass/include/keyword；配表的表头/行数/读取点/热重载 |
 | 工程识别 | 自动判断团结（`t` 补丁号）/ Unity / UE（仅识别），多根目录（前端 + 后端，后端可空缺） |
 
@@ -35,6 +35,7 @@
 
 * **编辑器导出（推荐，100% 覆盖）**：`tools/unity/Codegraph233GuidExporter.cs` 提供菜单 `Tools/codegraph233/导出 GUID 映射`，产物 `Temp/codegraph233-guid-map.tsv`（本仓 27,412 条 / 2 秒）。`codegraph233 index` 自动发现，产物全量替换（`guid_map` 表）。
 * **明文 `.meta` 兜底**：索引仍会扫描 `**/*.meta`，接受 32 位明文 guid（本仓 41.8% 明文），只补充、不覆盖编辑器导出。
+* **直接边**：索引结束会把 `guid:` 端点物化成 `asset:<root>:<path>` 的资产→资产边（材质→贴图、prefab→嵌套 prefab/脚本），一次 INSERT OR IGNORE，幂等。
 * **效果（本仓实测）**：4,933 个 guid 引用中 **4,771 个解析到资产（96.7%）**；`cg233_guid_lookup` 能回答“这个 guid 是谁、被谁引用、它引用了谁”，`cg233_asset_refs(path=...)` 能列出 prefab → 嵌套 prefab / 脚本 / 贴图 / 材质，边带 `dst_path` 与 `dst_type`。
 * 团结加密 guid 仅靠 `.meta` 无法反解（无导出时覆盖率约 13.6%），`status` 会用 `guid_refs_mapped / guid_refs` 明确显示当前覆盖率。
 * 资产新增/改名后重新导出一次即可；CI 可用 `-executeMethod Codegraph233.Editor.Codegraph233GuidExporter.ExportBatch`。
@@ -48,7 +49,7 @@
 
 ## 按需启用（不为不需要的能力付成本）
 
-`profile` 预设 + `features` 细粒度覆盖，`languages: ["auto"]` 按实际文件启用：
+`profile` 预设 + `features` 细粒度覆盖（8 项：code / type_deps / prefabs / shaders / assets / meta / config_tables / guid_map），`languages: ["auto"]` 按实际文件启用：
 
 | profile | 索引内容 |
 | --- | --- |
@@ -61,7 +62,7 @@
 {
   "profile": "game",
   "languages": ["auto"],
-  "features": { "meta": false, "assets": false }
+  "features": { "meta": false, "assets": false, "type_deps": false }
 }
 ```
 
@@ -77,11 +78,12 @@ codegraph233 status                        # 显示 profile 与 7 项能力开�
 
 | 措施 | 效果（本仓 48,101 文件） |
 | --- | --- |
-| 全量 `--force` | **55s**（优化前 108s） |
-| 无改动增量 | **11s**（优化前 38s） |
+| 全量 `--force` | **~60s**（优化前 108s；含类型依赖 174 万 refs / 3.7 万资产直接边） |
+| 无改动增量 | **~12s**（优化前 38s） |
 | 快速写入档（默认） | `journal_mode=MEMORY` + `synchronous=OFF` + `mmap` + 128MB cache；崩溃只丢索引，可重建 |
 | 持久档 | `index --safe`（WAL + NORMAL），适合边索引边查询 |
-| 绑定并行 | 引用解析按 CPU 并行，分页 10 万条，峰值内存不再随 refs 线性增长 |
+| 绑定并行 | 引用解析按 CPU 并行，分页 10 万条，峰值内存不再随 refs 线性增长；`type_uses` 走类型名快速路径 |
+| 单事务绑定 | 每页的 ref target 更新 + edges 插入合并为一个事务 |
 | 只写变化 | 引用目标未变则不写库（162 万 refs 增量更新≈0） |
 | 批量写 | edges 多行 INSERT（400/批）、refs 临时表 `UPDATE ... FROM` |
 | 关闭时 | `wal_checkpoint(TRUNCATE)`（安全档），索引目录不残留大 WAL |
@@ -188,6 +190,8 @@ codegraph233 install-mcp   # 写各客户端 MCP 配置
 | `cg233_impact` | 改动影响面（类型会聚合其成员） |
 | `cg233_search_pattern` | 正则检索 + 上下文（补图未覆盖的语法） |
 | `cg233_asset_search` | prefab/scene 对象、shader、配表 |
+| `cg233_asset_orphans` | 未被任何资产引用的资源（清理候选），按体积排序 |
+| `cg233_project_health` | 一次拿到计数、未解析引用、guid 覆盖率、孤儿/已关联资产、DB 体积、最大资产 |
 | `cg233_asset_tree` | prefab/scene 层级 |
 | `cg233_asset_refs` | instantiates / uses_script / references / includes（支持 `path` 与 `kinds` 过滤，边带 `dst_path`/`dst_type`） |
 | `cg233_shader_info` | properties、pass、include、keyword |
@@ -207,7 +211,7 @@ codegraph233 install-mcp   # 写各客户端 MCP 配置
 | GUID 映射 | 27,720 条；引用覆盖率 4,771 / 4,933 = **96.7%** |
 | 全量 `--force` | ~55s（快速档；`--safe` 约 108s） |
 | 无改动增量 | ~11s（只写变化的 ref target） |
-| DB | 562MB（compact 后；未压缩约 1.0GB） |
+| DB | 627MB（compact 后；未压缩约 692MB） |
 | 排除后减少 | 8,580 个美术备份/工具文件 |
 
 解析按 CPU 并行，写库分批，峰值内存约 3GB（23k 文件全量重建）。

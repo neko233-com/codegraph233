@@ -30,7 +30,7 @@ namespace Game.Core {
 `
 
 func TestParseStructure(t *testing.T) {
-	res := Parse("Assets/Scripts/Player.cs", "client", []byte(sample))
+	res := Parse("Assets/Scripts/Player.cs", "client", []byte(sample), true)
 	find := func(kind, name string) *model.Symbol {
 		for i := range res.Symbols {
 			if res.Symbols[i].Kind == kind && res.Symbols[i].Name == name {
@@ -72,7 +72,7 @@ func TestParseStructure(t *testing.T) {
 }
 
 func TestParseRefs(t *testing.T) {
-	res := Parse("Assets/Scripts/Player.cs", "client", []byte(sample))
+	res := Parse("Assets/Scripts/Player.cs", "client", []byte(sample), true)
 	has := func(kind, name string) *model.Ref {
 		for i := range res.Refs {
 			if res.Refs[i].Kind == kind && res.Refs[i].Name == name {
@@ -113,7 +113,7 @@ func TestParseSkipsCommentsAndStrings(t *testing.T) {
     Real.Go();
   }
 }`
-	res := Parse("A.cs", "client", []byte(src))
+	res := Parse("A.cs", "client", []byte(src), true)
 	for _, r := range res.Refs {
 		if r.Name == "Call" {
 			t.Fatalf("comment/string produced a ref: %+v", r)
@@ -137,7 +137,7 @@ func TestFieldInitializersAreNotMethods(t *testing.T) {
   private int _count = 0;
   public void Run() { }
 }`
-	res := Parse("A.cs", "client", []byte(src))
+	res := Parse("A.cs", "client", []byte(src), true)
 	byName := map[string]model.Symbol{}
 	for _, s := range res.Symbols {
 		byName[s.Name] = s
@@ -154,6 +154,31 @@ func TestFieldInitializersAreNotMethods(t *testing.T) {
 	for _, bad := range []string{"None", "get", "set", "Random", "new"} {
 		if s, ok := byName[bad]; ok {
 			t.Errorf("spurious symbol %q: %+v", bad, s)
+		}
+	}
+}
+
+func TestTypeUses(t *testing.T) {
+	src := `class A {
+  private List<Player> players;
+  public Player Get(Buff b) { return null; }
+  public Dictionary<string, Enemy> map;
+}`
+	res := Parse("A.cs", "client", []byte(src), true)
+	seen := map[string]bool{}
+	for _, r := range res.Refs {
+		if r.Kind == "type_uses" {
+			seen[r.Name] = true
+		}
+	}
+	for _, want := range []string{"List", "Player", "Buff", "Dictionary", "Enemy"} {
+		if !seen[want] {
+			t.Errorf("missing type_uses %q; got %v", want, seen)
+		}
+	}
+	for _, bad := range []string{"string", "int", "void"} {
+		if seen[bad] {
+			t.Errorf("builtin %q must not appear as type_uses", bad)
 		}
 	}
 }

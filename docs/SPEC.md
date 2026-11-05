@@ -62,13 +62,15 @@
 | TMP 字体（`TMP_FontAsset`） | 已实现 | 图集宽高、字符数、字形数、源字体 guid、AtlasPopulationMode |
 | Spine（.skel/.atlas/spine json） | 已实现 | atlas 页数、骨骼数、动画数、spine 版本 |
 | 材质/动画/控制器/时间轴/混音器 | 已实现 | shader guid、贴图引用、clip/state/track 引用 |
+| 资产→资产直接边 | 已实现 | 索引结束把 guid 端点物化为 `asset:<root>:<path>`，可直接回答"这个材质用了哪些贴图/这个 prefab 实例化了哪些 prefab" |
+| 孤儿资产 / 健康报告 | 已实现 | `cg233_asset_orphans`（未被引用的资源，体积排序）、`cg233_project_health`（覆盖率/孤儿/DB 体积/最大资产） |
 | asmdef | 已实现 | 程序集名、引用、平台 |
 | 配表 | 已实现 | xlsx（每个 sheet 一张表，**自动挑字段名行**）、csv/tsv、json；表头/行数/列数/说明行；读取点与热重载探测 |
 | guid → 路径 | 已实现 | 编辑器导出 TSV（100% 资产，本仓 27,412 条）为主；明文 `.meta`（32 位）自动补充；本仓引用覆盖率 96.7% |
 
 ## 3.5 能力开关与性能档
 
-* `profile`: `full` / `game` / `code` / `minimal`；`features` 七项（code、prefabs、shaders、assets、meta、config_tables、guid_map）可逐项覆盖。
+* `profile`: `full` / `game` / `code` / `minimal`；`features` 八项（code、type_deps、prefabs、shaders、assets、meta、config_tables、guid_map）可逐项覆盖。
 * `languages: ["auto"]` 按实际检测启用；显式列表优先。
 * 写入档：默认快速档（`journal_mode=MEMORY`、`synchronous=OFF`、mmap、128MB cache），索引可重建，崩溃只丢索引；`index --safe` 使用 WAL 持久档。
 * 绑定阶段：分页读取（10 万/页）、按 CPU 并行解析、只写目标发生变化的引用。
@@ -89,7 +91,7 @@
 
 工具清单（详见 README）：
 
-`cg233_status` / `cg233_index` / `cg233_overview` / `cg233_find_symbol` / `cg233_get_symbol` / `cg233_file_outline` / `cg233_find_referencing_symbols` / `cg233_call_graph` / `cg233_symbol_path` / `cg233_impact` / `cg233_search_pattern` / `cg233_asset_search` / `cg233_asset_tree` / `cg233_asset_refs` / `cg233_asset_stats` / `cg233_asset_info` / `cg233_guid_lookup` / `cg233_shader_info` / `cg233_config_tables` / `cg233_config_readers`
+`cg233_status` / `cg233_index` / `cg233_overview` / `cg233_find_symbol` / `cg233_get_symbol` / `cg233_file_outline` / `cg233_find_referencing_symbols` / `cg233_call_graph` / `cg233_symbol_path` / `cg233_impact` / `cg233_search_pattern` / `cg233_asset_search` / `cg233_asset_tree` / `cg233_asset_refs` / `cg233_asset_stats` / `cg233_asset_info` / `cg233_asset_orphans` / `cg233_project_health` / `cg233_guid_lookup` / `cg233_shader_info` / `cg233_config_tables` / `cg233_config_readers`
 
 ## 5. 项目接入与分发
 

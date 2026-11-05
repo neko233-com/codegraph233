@@ -57,6 +57,18 @@ func (b *binder) resolve(r store.LoadedRef, src store.SymbolRow) (resolution, bo
 	wantCallable := r.Kind == "calls"
 	wantType := r.Kind == "constructs" || r.Kind == "inherits" || r.Kind == "embeds"
 
+	// Type dependencies point straight at a type by name; skip the (expensive)
+	// receiver resolution path.
+	if r.Kind == "type_uses" {
+		if c := pick(b.typeBySimple[r.Name], r, src, false, true); c != nil {
+			return resolution{*c, "type"}, true
+		}
+		if c := pick(b.byName[r.Name], r, src, false, true); c != nil {
+			return resolution{*c, "name"}, true
+		}
+		return resolution{}, false
+	}
+
 	if r.ReceiverType != "" {
 		if cand, ok := b.resolveReceiver(r, src, wantCallable, wantType); ok {
 			return cand, true

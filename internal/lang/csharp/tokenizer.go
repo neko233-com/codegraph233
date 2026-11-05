@@ -26,6 +26,14 @@ var multiPunct = []string{
 	"->", "...",
 }
 
+var multiPunctBuckets = func() map[byte][]string {
+	m := map[byte][]string{}
+	for _, p := range multiPunct {
+		m[p[0]] = append(m[p[0]], p)
+	}
+	return m
+}()
+
 func isIdentStart(c byte) bool {
 	return c == '_' || c == '@' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80
 }
@@ -124,7 +132,7 @@ func tokenize(src []byte) []token {
 			continue
 		}
 		matched := ""
-		for _, mp := range multiPunct {
+		for _, mp := range multiPunctBuckets[c] {
 			if i+len(mp) <= n && string(src[i:i+len(mp)]) == mp {
 				matched = mp
 				break

@@ -13,6 +13,7 @@ type Features struct {
 	Meta         bool `json:"meta"`
 	ConfigTables bool `json:"config_tables"`
 	GuidMap      bool `json:"guid_map"`
+	TypeDeps     bool `json:"type_deps"`
 }
 
 // FeatureSet is the JSON shape: nil means "inherit from profile".
@@ -24,6 +25,7 @@ type FeatureSet struct {
 	Meta         *bool `json:"meta,omitempty"`
 	ConfigTables *bool `json:"config_tables,omitempty"`
 	GuidMap      *bool `json:"guid_map,omitempty"`
+	TypeDeps     *bool `json:"type_deps,omitempty"`
 }
 
 // Profile presets.  `full` is the historical behavior.
@@ -46,13 +48,13 @@ func (c *Config) ResolveFeatures() Features {
 	var f Features
 	switch profile {
 	case ProfileCode:
-		f = Features{Code: true}
+		f = Features{Code: true, TypeDeps: true}
 	case ProfileMinimal:
-		f = Features{Code: true, Prefabs: true}
+		f = Features{Code: true, TypeDeps: true, Prefabs: true}
 	case ProfileGame:
-		f = Features{Code: true, Prefabs: true, Shaders: true, Assets: true, ConfigTables: true, GuidMap: true}
+		f = Features{Code: true, TypeDeps: true, Prefabs: true, Shaders: true, Assets: true, ConfigTables: true, GuidMap: true}
 	default: // full
-		f = Features{Code: true, Prefabs: true, Shaders: true, Assets: true, Meta: true, ConfigTables: true, GuidMap: true}
+		f = Features{Code: true, TypeDeps: true, Prefabs: true, Shaders: true, Assets: true, Meta: true, ConfigTables: true, GuidMap: true}
 	}
 	set := func(dst *bool, v *bool) {
 		if v != nil {
@@ -66,13 +68,14 @@ func (c *Config) ResolveFeatures() Features {
 	set(&f.Meta, c.Features.Meta)
 	set(&f.ConfigTables, c.Features.ConfigTables)
 	set(&f.GuidMap, c.Features.GuidMap)
+	set(&f.TypeDeps, c.Features.TypeDeps)
 	return f
 }
 
 // EnabledCount reports how many capabilities are on (for status output).
 func (f Features) EnabledCount() int {
 	n := 0
-	for _, v := range []bool{f.Code, f.Prefabs, f.Shaders, f.Assets, f.Meta, f.ConfigTables, f.GuidMap} {
+	for _, v := range []bool{f.Code, f.TypeDeps, f.Prefabs, f.Shaders, f.Assets, f.Meta, f.ConfigTables, f.GuidMap} {
 		if v {
 			n++
 		}

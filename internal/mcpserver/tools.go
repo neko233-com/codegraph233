@@ -159,6 +159,22 @@ func toolDefs() []toolDef {
 			}),
 		},
 		{
+			Name: "cg233_asset_orphans",
+			Description: "List resource assets nothing references (image/audio/video/font/spine/material/anim/timeline...), largest first. Use it to find cleanup candidates; entry points (prefab/scene/shader/config) are excluded by default.",
+			InputSchema: obj(map[string]any{
+				"root":  str("Optional root key"),
+				"kinds": str("Optional comma separated asset kinds"),
+				"limit": num("Default 200"),
+			}),
+		},
+		{
+			Name: "cg233_project_health",
+			Description: "Index and asset health in one call: counts, unresolved refs, guid coverage, orphan/linked assets, DB size, top largest assets, active profile/features.",
+			InputSchema: obj(map[string]any{
+				"root": str("Optional root key"),
+			}),
+		},
+		{
 			Name: "cg233_guid_lookup",
 			Description: "Resolve a guid (32 hex) or asset path substring to its asset path/type plus which prefabs/materials reference it and what it references. Needs a guid map exported from the editor (Tools/codegraph233/导出 GUID 映射); plaintext .meta is also auto-indexed.",
 			InputSchema: obj(map[string]any{
@@ -383,6 +399,28 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 			return "", err
 		}
 		return toJSON(hits)
+
+	case "cg233_asset_orphans":
+		eng, err := s.requireEngine()
+		if err != nil {
+			return "", err
+		}
+		hits, err := eng.OrphanAssets(argStr(args, "root", ""), splitCSV(argStr(args, "kinds", "")), argInt(args, "limit", 200))
+		if err != nil {
+			return "", err
+		}
+		return toJSON(hits)
+
+	case "cg233_project_health":
+		eng, err := s.requireEngine()
+		if err != nil {
+			return "", err
+		}
+		h, err := eng.HealthReport(argStr(args, "root", ""))
+		if err != nil {
+			return "", err
+		}
+		return toJSON(h)
 
 	case "cg233_guid_lookup":
 		eng, err := s.requireEngine()

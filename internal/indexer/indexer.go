@@ -29,6 +29,7 @@ type Options struct {
 	Jobs      int
 	Quiet     bool
 	FastWrite bool
+	TypeDeps  bool
 	Progress  func(done, total int, current string)
 }
 
@@ -90,6 +91,7 @@ func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 
 	// guid -> path mapping (from the Unity/Tuanjie exporter or plaintext .meta)
 	feats := cfg.ResolveFeatures()
+	opts.TypeDeps = feats.TypeDeps
 	var guidRows []store.GuidRow
 	var guidFiles []string
 	var gErr error
@@ -135,7 +137,7 @@ func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 
 	// Parse and persist in bounded batches so peak memory stays flat on very
 	// large projects (client + backend + assets).
-	const writeBatch = 400
+	const writeBatch = 600
 	var parseErrors []string
 	for start := 0; start < len(changed); start += writeBatch {
 		end := start + writeBatch
@@ -163,6 +165,12 @@ func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 	edges, unresolved, err := rebindIndex(st, opts.Jobs, opts.Quiet)
 	if err != nil {
 		return nil, err
+	}
+
+	if feats.GuidMap && stats.GuidEntries > 0 {
+		if n, mErr := st.MaterializeGuidEdges(); mErr == nil && !opts.Quiet {
+			fmt.Fprintf(os.Stderr, "[guid] materialized %d asset->asset edges\n", n)
+		}
 	}
 
 	for _, r := range roots {
@@ -432,7 +440,7 @@ func parseOne(f scanFile, opts Options) *model.FileResult {
 		if err != nil {
 			return &model.FileResult{RelPath: f.Rel, Root: f.Root, Lang: f.Lang, Errors: []string{err.Error()}}
 		}
-		return csharp.Parse(f.Rel, f.Root, data)
+		return csharp.Parse(f.Rel, f.Root, data, opts.TypeDeps)
 	case "go":
 		data, err := os.ReadFile(f.Abs)
 		if err != nil {
@@ -564,7 +572,7 @@ func writeResults(st *store.Store, files []scanFile, results []*model.FileResult
 			return err
 		}
 		pending++
-		if pending >= 200 {
+		if pending >= 300 {
 			if err := tx.Commit(); err != nil {
 				return err
 			}

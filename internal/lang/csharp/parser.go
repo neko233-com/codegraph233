@@ -11,12 +11,14 @@ import (
 )
 
 type parser struct {
-	toks    []token
-	res     *model.FileResult
-	ns      string
-	usings  []string
-	types   map[string]string // qualname -> kind
-	members map[string]string // "qual|member" -> declared type text
+	toks     []token
+	res      *model.FileResult
+	ns       string
+	usings   []string
+	types    map[string]string // qualname -> kind
+	members  map[string]string // "qual|member" -> declared type text
+	typeUses        map[string]bool // "srcKey|Type" de-dup
+	includeTypeDeps bool
 }
 
 var typeKeywords = map[string]string{
@@ -45,12 +47,14 @@ var notCalls = map[string]bool{
 }
 
 // Parse extracts declarations and unresolved references from one C# file.
-func Parse(relPath, root string, src []byte) *model.FileResult {
+func Parse(relPath, root string, src []byte, includeTypeDeps bool) *model.FileResult {
 	p := &parser{
 		toks:    tokenize(src),
 		res:     &model.FileResult{RelPath: relPath, Root: root, Lang: "csharp"},
-		types:   map[string]string{},
-		members: map[string]string{},
+		types:    map[string]string{},
+		members:  map[string]string{},
+		typeUses:        map[string]bool{},
+		includeTypeDeps: includeTypeDeps,
 	}
 	p.parseBlock(0, len(p.toks)-1, "", "")
 	return p.res
@@ -679,10 +683,13 @@ func (p *parser) parseMember(from, end int, ns, typeQual string) int {
 	mods := p.collectModifiers(declHead)
 
 	bodyOpen, bodyClose := -1, -1
+	paramsOpen, paramsClose := -1, -1
 	next := termIdx + 1
 	switch term {
 	case "(":
-		closeParen := p.matchClose(termIdx)
+		paramsOpen = termIdx
+		paramsClose = p.matchClose(termIdx)
+		closeParen := paramsClose
 		paramCount = countParams(p.toks, termIdx, closeParen)
 		kind = model.KindMethod
 		if name == lastTypeName(typeQual) {
@@ -751,13 +758,20 @@ func (p *parser) parseMember(from, end int, ns, typeQual string) int {
 	})
 	p.members[typeQual+"|"+name] = typeText
 
+	var paramTypes map[string]string
+	if paramsOpen >= 0 {
+		paramTypes = p.paramTypes(paramsOpen)
+	} else {
+		paramTypes = map[string]string{}
+	}
+	// Declared types of the member itself (raw text keeps generic arguments such
+	// as Dictionary<string, Enemy>), plus the parameter list types.
+	p.addTypeUses(key, ns, p.rawText(declHead, nameIdx), line)
+	if paramsClose > paramsOpen {
+		p.addTypeUses(key, ns, p.rawText(paramsOpen+1, paramsClose), line)
+	}
+
 	if bodyOpen >= 0 && bodyClose > bodyOpen {
-		var paramTypes map[string]string
-		if term == "(" {
-			paramTypes = p.paramTypes(termIdx)
-		} else {
-			paramTypes = map[string]string{}
-		}
 		p.scanRefs(bodyOpen+1, bodyClose, key, ns, typeQual, paramTypes)
 	}
 	if next <= from {
@@ -1024,6 +1038,86 @@ func (p *parser) collectLocalVars(from, to int, varTypes map[string]string) {
 		}
 	}
 }
+
+// addTypeUses records dependency edges for every non-builtin type name in a
+// declaration's type text (de-duplicated per source symbol).
+func (p *parser) addTypeUses(srcKey, ns, typeText string, line int) {
+	if !p.includeTypeDeps || typeText == "" || srcKey == "" {
+		return
+	}
+	for _, name := range typeNames(typeText) {
+		if isBuiltinType(name) {
+			continue
+		}
+		if c := name[0]; c < 'A' || c > 'Z' {
+			continue
+		}
+		k := srcKey + "|" + name
+		if p.typeUses[k] {
+			continue
+		}
+		p.typeUses[k] = true
+		p.res.Refs = append(p.res.Refs, model.Ref{
+			Root: p.res.Root, SrcKey: srcKey, Name: name, Kind: "type_uses",
+			ReceiverType: name, Line: line, NamespaceHint: ns, Arity: -1,
+		})
+	}
+}
+
+// typeNames extracts identifier-like type names from a type expression.
+func typeNames(text string) []string {
+	var out []string
+	start := -1
+	for i := 0; i <= len(text); i++ {
+		var c byte
+		if i < len(text) {
+			c = text[i]
+		}
+		isIdent := c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c >= 0x80
+		if isIdent {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start >= 0 {
+			out = append(out, text[start:i])
+			start = -1
+		}
+	}
+	return out
+}
+
+// rawText joins declaration tokens verbatim (keeps generic arguments).
+func (p *parser) rawText(from, to int) string {
+	if from < 0 || to <= from {
+		return ""
+	}
+	var b strings.Builder
+	prevIdent := false
+	for j := from; j < to && j < len(p.toks); j++ {
+		t := p.toks[j]
+		if t.kind == tokEOF {
+			break
+		}
+		if prevIdent && t.kind == tokIdent {
+			b.WriteByte(' ') // keep `Buff b` from collapsing into `Buffb`
+		}
+		b.WriteString(t.text)
+		prevIdent = t.kind == tokIdent
+	}
+	return b.String()
+}
+
+var builtinTypes = map[string]bool{
+	"int": true, "uint": true, "long": true, "ulong": true, "short": true, "ushort": true,
+	"byte": true, "sbyte": true, "float": true, "double": true, "decimal": true,
+	"bool": true, "char": true, "string": true, "object": true, "void": true,
+	"var": true, "dynamic": true, "nint": true, "nuint": true, "this": true, "base": true,
+	"ref": true, "out": true, "in": true, "params": true, "readonly": true,
+}
+
+func isBuiltinType(name string) bool { return builtinTypes[name] }
 
 func (p *parser) addRef(srcKey, receiver, kind, name, recvType, receiverText string, line int, ns string, arity int) {
 	if name == "" {

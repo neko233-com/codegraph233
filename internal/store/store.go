@@ -177,7 +177,48 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
-	return s.SetMeta("schema_version", "1")
+	// asset_edges must be unique so guid materialization is idempotent.  The
+	// dedupe scan is only needed on the first migration (it is O(table)).
+	var idxCount int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_asset_edges_uniq'`).Scan(&idxCount)
+	if idxCount == 0 {
+		if _, err := s.db.Exec(`DELETE FROM asset_edges WHERE rowid NOT IN
+			(SELECT MIN(rowid) FROM asset_edges GROUP BY src, dst, kind, COALESCE(detail,''))`); err != nil {
+			return fmt.Errorf("migrate asset edges: %w", err)
+		}
+		if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_edges_uniq
+			ON asset_edges(src, dst, kind, detail)`); err != nil {
+			return fmt.Errorf("migrate asset edge index: %w", err)
+		}
+	}
+	return s.SetMeta("schema_version", "2")
+}
+
+// MaterializeGuidEdges adds asset-to-asset edges for every guid endpoint that
+// has a mapping, so queries do not have to resolve guids per row.  Idempotent.
+func (s *Store) MaterializeGuidEdges() (int, error) {
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_edges(src, dst, kind, line, detail, root)
+		SELECT e.src,
+		       'asset:' || COALESCE((SELECT a.root FROM assets a WHERE a.asset_key = e.src), e.root, '') || ':' || g.path,
+		       e.kind, e.line, e.detail, e.root
+		FROM asset_edges e
+		JOIN guid_map g ON g.guid = SUBSTR(e.dst, 6)
+		WHERE e.dst LIKE 'guid:%'`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// AssetHealthCounts returns (orphan candidates, assets with a path).
+func (s *Store) AssetHealthCounts() (orphans int, linked int) {
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM assets a
+		WHERE a.path <> '' AND a.kind NOT IN ('guid_ref','prefab_object','scene_object','shader_property','shader_pass','config_source')
+		  AND NOT EXISTS (SELECT 1 FROM asset_edges e WHERE e.dst = a.asset_key)`).Scan(&orphans)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM assets a
+		WHERE a.path <> '' AND EXISTS (SELECT 1 FROM asset_edges e WHERE e.dst = a.asset_key)`).Scan(&linked)
+	return
 }
 
 // FileState is the incremental scan fingerprint of one file.
@@ -503,7 +544,7 @@ func (t *Tx) InsertAssetEdges(edges []model.AssetEdge) error {
 	if len(edges) == 0 {
 		return nil
 	}
-	stmt, err := t.tx.Prepare(`INSERT INTO asset_edges(src, dst, kind, line, detail, root) VALUES(?,?,?,?,?,?)`)
+	stmt, err := t.tx.Prepare(`INSERT OR IGNORE INTO asset_edges(src, dst, kind, line, detail, root) VALUES(?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -535,7 +576,7 @@ func (s *Store) InsertEdges(edges []model.ResolvedEdge) error {
 	if err != nil {
 		return err
 	}
-	const batch = 400
+	const batch = 800
 	for start := 0; start < len(edges); start += batch {
 		end := start + batch
 		if end > len(edges) {
@@ -749,6 +790,78 @@ func (s *Store) GuidCount() int {
 	var n int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM guid_map`).Scan(&n)
 	return n
+}
+
+// ApplyBindings flushes reference targets and symbol edges in one transaction,
+// halving commit/statement overhead during a rebind page.
+func (s *Store) ApplyBindings(updates []RefTargetUpdate, edges []model.ResolvedEdge) error {
+	if len(updates) == 0 && len(edges) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if len(updates) > 0 {
+		if _, err := tx.Exec(`CREATE TEMP TABLE IF NOT EXISTS _ref_upd(id INTEGER PRIMARY KEY, target INTEGER, conf TEXT)`); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM _ref_upd`); err != nil {
+			tx.Rollback()
+			return err
+		}
+		const ub = 800
+		for start := 0; start < len(updates); start += ub {
+			end := start + ub
+			if end > len(updates) {
+				end = len(updates)
+			}
+			var b strings.Builder
+			b.WriteString(`INSERT OR REPLACE INTO _ref_upd(id,target,conf) VALUES `)
+			args := make([]any, 0, (end-start)*3)
+			for i := start; i < end; i++ {
+				if i > start {
+					b.WriteByte(',')
+				}
+				b.WriteString(`(?,?,?)`)
+				u := updates[i]
+				args = append(args, u.ID, u.Target, u.Confidence)
+			}
+			if _, err := tx.Exec(b.String(), args...); err != nil {
+				tx.Rollback()
+				return err
+			}
+		}
+		if _, err := tx.Exec(`UPDATE refs SET target = u.target, confidence = u.conf
+			FROM _ref_upd u WHERE refs.id = u.id`); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	const eb = 800
+	for start := 0; start < len(edges); start += eb {
+		end := start + eb
+		if end > len(edges) {
+			end = len(edges)
+		}
+		var b strings.Builder
+		b.WriteString(`INSERT INTO edges(src, dst, kind, line, confidence) VALUES `)
+		args := make([]any, 0, (end-start)*5)
+		for i := start; i < end; i++ {
+			if i > start {
+				b.WriteByte(',')
+			}
+			b.WriteString(`(?,?,?,?,?)`)
+			e := edges[i]
+			args = append(args, e.Src, e.Dst, e.Kind, e.Line, e.Confidence)
+		}
+		if _, err := tx.Exec(b.String(), args...); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // SetMeta writes a key/value pair.

@@ -145,10 +145,7 @@ func rebindIndex(st *store.Store, jobs int, quiet bool) (int, int, error) {
 			})
 		}
 
-		if err := st.UpdateRefTarget(updates); err != nil {
-			return 0, 0, err
-		}
-		if err := st.InsertEdges(edges); err != nil {
+		if err := st.ApplyBindings(updates, edges); err != nil {
 			return 0, 0, err
 		}
 		totalEdges += len(edges)
