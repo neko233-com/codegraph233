@@ -72,6 +72,7 @@
 * `languages: ["auto"]` 按实际检测启用；显式列表优先。
 * 写入档：默认快速档（`journal_mode=MEMORY`、`synchronous=OFF`、mmap、128MB cache），索引可重建，崩溃只丢索引；`index --safe` 使用 WAL 持久档。
 * 绑定阶段：分页读取（10 万/页）、按 CPU 并行解析、只写目标发生变化的引用。
+* 空间：`codegraph233 compact` 执行 `ANALYZE` + `VACUUM`；本仓实测 1,019MB → 562MB（-45%）。
 * 非目标补充：不追求"崩溃后索引完好"，只保证"索引可无副作用重建"；资产元信息不替代 AssetDatabase 的导入设置。
 
 ## 4. MCP 契约

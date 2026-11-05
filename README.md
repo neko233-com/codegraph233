@@ -85,6 +85,7 @@ codegraph233 status                        # 显示 profile 与 7 项能力开�
 | 只写变化 | 引用目标未变则不写库（162 万 refs 增量更新≈0） |
 | 批量写 | edges 多行 INSERT（400/批）、refs 临时表 `UPDATE ... FROM` |
 | 关闭时 | `wal_checkpoint(TRUNCATE)`（安全档），索引目录不残留大 WAL |
+| 空间回收 | `codegraph233 compact`（ANALYZE + VACUUM）：本仓 **1,019MB → 562MB（-45%）**，建议全量重建几次后执行一次 |
 
 > MCP 内的 `cg233_index` 固定用持久档（服务端持有读连接，避免 journal 切档冲突）。
 
@@ -206,7 +207,7 @@ codegraph233 install-mcp   # 写各客户端 MCP 配置
 | GUID 映射 | 27,720 条；引用覆盖率 4,771 / 4,933 = **96.7%** |
 | 全量 `--force` | ~55s（快速档；`--safe` 约 108s） |
 | 无改动增量 | ~11s（只写变化的 ref target） |
-| DB | ~1.0GB（WAL 在退出时 TRUNCATE 收敛） |
+| DB | 562MB（compact 后；未压缩约 1.0GB） |
 | 排除后减少 | 8,580 个美术备份/工具文件 |
 
 解析按 CPU 并行，写库分批，峰值内存约 3GB（23k 文件全量重建）。

@@ -15,6 +15,7 @@ import (
 	"github.com/neko233-com/codegraph233/internal/detect"
 	"github.com/neko233-com/codegraph233/internal/indexer"
 	"github.com/neko233-com/codegraph233/internal/mcpserver"
+	"github.com/neko233-com/codegraph233/internal/store"
 )
 
 const version = "0.1.0"
@@ -37,6 +38,8 @@ func main() {
 		runInit(args)
 	case "install-mcp":
 		runInstallMCP(args)
+	case "compact":
+		runCompact(args)
 	case "version", "--version", "-v":
 		fmt.Println("codegraph233 " + version)
 	case "help", "--help", "-h":
@@ -277,6 +280,40 @@ func ensureGitignore(dir string) {
 		return
 	}
 	_ = os.WriteFile(path, []byte("# codegraph233 本地索引（勿提交）\n"+entry+"\n"), 0o644)
+}
+
+// runCompact reclaims space and refreshes planner statistics.  It is optional:
+// the index stays correct without it, it just gets physically smaller.
+func runCompact(args []string) {
+	fs := flag.NewFlagSet("compact", flag.ExitOnError)
+	root := fs.String("root", "", "project root (defaults to cwd / CODEGRAPH233_ROOT)")
+	_ = fs.Parse(args)
+	if *root != "" {
+		os.Setenv("CODEGRAPH233_ROOT", *root)
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		fatal(err)
+	}
+	st, err := store.Open(cfg.DBPath())
+	if err != nil {
+		fatal(err)
+	}
+	defer st.Close()
+	before, _ := os.Stat(cfg.DBPath())
+	if _, err := st.DB().Exec(`PRAGMA optimize`); err != nil {
+		fmt.Fprintln(os.Stderr, "warn optimize:", err)
+	}
+	if _, err := st.DB().Exec(`ANALYZE`); err != nil {
+		fmt.Fprintln(os.Stderr, "warn analyze:", err)
+	}
+	if _, err := st.DB().Exec(`VACUUM`); err != nil {
+		fmt.Fprintln(os.Stderr, "warn vacuum:", err)
+	}
+	after, _ := os.Stat(cfg.DBPath())
+	if before != nil && after != nil {
+		fmt.Printf("compacted: %.1f MB -> %.1f MB\n", float64(before.Size())/(1<<20), float64(after.Size())/(1<<20))
+	}
 }
 
 func runInstallMCP(args []string) {
