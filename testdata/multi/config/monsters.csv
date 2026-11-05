@@ -1,0 +1,4 @@
+id,name,attack,hp,quality
+1001,Slime,3,20,1
+1002,Goblin,7,35,2
+1003,Dragon,42,500,3

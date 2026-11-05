@@ -99,12 +99,14 @@ pub fn parse_prefab(rel: &str, root: &str, text: &str) -> FileParse {
         ..Default::default()
     };
     let file_key = format!("asset:{root}:{rel}");
+    let mut file_meta = HashMap::new();
+    file_meta.insert("bytes".to_string(), text.len().to_string());
     res.assets.push(asset_node(
         rel,
         root,
         if rel.ends_with(".unity") { "scene" } else { "prefab" },
         &base_name(rel),
-        HashMap::new(),
+        file_meta,
     ));
 
     let mut docs: Vec<Doc> = Vec::new();
@@ -276,16 +278,23 @@ pub fn parse_shader(rel: &str, root: &str, text: &str) -> FileParse {
         .captures(text)
         .map(|c| c[1].to_string())
         .unwrap_or_else(|| base_name(rel));
+    let shader_line = shader_re
+        .find(text)
+        .map(|m| text[..m.start()].matches('\n').count() as i32 + 1)
+        .unwrap_or(1);
     let file_key = format!("asset:{root}:{rel}");
     let mut meta = HashMap::new();
     meta.insert("bytes".to_string(), text.len().to_string());
-    res.assets.push(asset_node(rel, root, "shader", &name, meta));
+    let mut shader_asset = asset_node(rel, root, "shader", &name, meta);
+    shader_asset.line = shader_line;
+    res.assets.push(shader_asset);
     let mut props = HashSet::new();
     for c in prop_re.captures_iter(text) {
         let p = c[1].to_string();
         if !props.insert(p.clone()) {
             continue;
         }
+        let at = c.get(0).map(|m| m.start()).unwrap_or(0);
         res.assets.push(Asset {
             key: format!("{file_key}#prop:{p}"),
             root: root.to_string(),
@@ -293,7 +302,7 @@ pub fn parse_shader(rel: &str, root: &str, text: &str) -> FileParse {
             path: rel.to_string(),
             name: p,
             unity_id: String::new(),
-            line: 0,
+            line: text[..at].matches('\n').count() as i32 + 1,
             meta: HashMap::new(),
         });
     }
@@ -310,7 +319,17 @@ pub fn parse_shader(rel: &str, root: &str, text: &str) -> FileParse {
     let mut kws: Vec<String> = Vec::new();
     for m in pragma_re.find_iter(text) {
         for w in m.as_str().split_whitespace() {
-            if w.starts_with('_') && w.len() > 1 && !kws.iter().any(|k| k == w) {
+            if w == "_" || w.starts_with('#') || w.is_empty() {
+                continue;
+            }
+            if w == "multi_compile"
+                || w.starts_with("multi_compile_")
+                || w == "shader_feature"
+                || w.starts_with("shader_feature_")
+            {
+                continue;
+            }
+            if !kws.iter().any(|k| k == w) {
                 kws.push(w.to_string());
             }
         }
@@ -323,16 +342,17 @@ pub fn parse_shader(rel: &str, root: &str, text: &str) -> FileParse {
         if f == "main" {
             continue;
         }
+        let at = c.get(0).map(|m| m.start()).unwrap_or(0);
+        let line = text[..at].matches('\n').count() as i32 + 1;
         res.symbols.push(crate::model::Symbol {
-            key: crate::model::symbol_key(&format!("{name}.{f}"), "shader_func", 0),
-            root: root.to_string(),
+            key: crate::model::symbol_key(&format!("{name}.{f}"), "shader_func", line),
             lang: "shader".into(),
             kind: "shader_func".into(),
             name: f.clone(),
             qualname: format!("{name}.{f}"),
             namespace: name.clone(),
-            start_line: 0,
-            end_line: 0,
+            start_line: line,
+            end_line: line,
             signature: f,
             modifiers: String::new(),
             param_count: -1,
@@ -498,6 +518,10 @@ pub fn parse_config(rel: &str, root: &str, abs: &Path) -> FileParse {
         .unwrap_or_default();
     let mut meta = HashMap::new();
     meta.insert("format".into(), ext.clone());
+    meta.insert(
+        "bytes".into(),
+        fs::metadata(abs).map(|m| m.len()).unwrap_or(0).to_string(),
+    );
     match ext.as_str() {
         "csv" | "tsv" => {
             let sep = if ext == "tsv" { '\t' } else { ',' };
@@ -646,4 +670,103 @@ pub fn parse_guid_map_file(path: &Path) -> Result<Vec<GuidRow>, String> {
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefab_yields_hierarchy_and_script_edges() {
+        let text = r#"%YAML 1.1
+--- !u!1 &10
+GameObject:
+  m_Name: Root
+--- !u!4 &40
+Transform:
+  m_GameObject: {fileID: 10}
+--- !u!114 &1140
+MonoBehaviour:
+  m_GameObject: {fileID: 10}
+  m_Script: {fileID: 11500000, guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, type: 3}
+--- !u!1 &11
+GameObject:
+  m_Name: Child
+--- !u!4 &41
+Transform:
+  m_GameObject: {fileID: 11}
+  m_Father: {fileID: 40}
+"#;
+        let res = parse_prefab("Assets/Hero.prefab", "client", text);
+        let kinds: Vec<(&str, &str)> = res
+            .asset_edges
+            .iter()
+            .map(|e| (e.kind.as_str(), e.detail.as_str()))
+            .collect();
+        assert!(kinds.contains(&("contains", "gameobject")), "{kinds:?}");
+        assert!(kinds.contains(&("contains", "child")), "nested object edge missing: {kinds:?}");
+        assert!(kinds.iter().any(|(k, _)| *k == "uses_script"));
+        let parent = res
+            .asset_edges
+            .iter()
+            .find(|e| e.detail == "child")
+            .unwrap();
+        assert!(parent.src.ends_with("#10"));
+        assert!(parent.dst.ends_with("#11"));
+        let file = res.assets.iter().find(|a| a.kind == "prefab").unwrap();
+        assert_eq!(file.meta.get("bytes").map(String::as_str), Some(text.len().to_string().as_str()));
+    }
+
+    #[test]
+    fn shader_extracts_properties_keywords_and_functions() {
+        let text = r#"Shader "Game/Lit" {
+    Properties {
+        _MainTex ("Tex", 2D) = "white" {}
+        _Tint ("Tint", Color) = (1,1,1,1)
+    }
+    SubShader {
+        Pass {
+            CGPROGRAM
+            #pragma multi_compile _ LOW HIGH
+            #include "UnityCG.cginc"
+            float4 tinted(float4 c) { return c; }
+            fixed4 frag() : SV_Target { return 0; }
+            ENDCG
+        }
+    }
+}
+"#;
+        let res = parse_shader("Assets/Lit.shader", "client", text);
+        let props: Vec<&str> = res
+            .assets
+            .iter()
+            .filter(|a| a.kind == "shader_property")
+            .map(|a| a.name.as_str())
+            .collect();
+        assert_eq!(props.len(), 2);
+        assert!(props.contains(&"_MainTex"));
+        let shader = res.assets.iter().find(|a| a.kind == "shader").unwrap();
+        assert_eq!(shader.name, "Game/Lit");
+        assert!(shader.meta["keywords"].contains("LOW"));
+        assert!(res.symbols.iter().any(|s| s.name == "tinted" && s.start_line > 1));
+        assert!(res
+            .asset_edges
+            .iter()
+            .any(|e| e.kind == "includes" && e.dst == "include:UnityCG.cginc"));
+    }
+
+    #[test]
+    fn csv_config_reports_headers_and_rows() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join("multi")
+            .join("config")
+            .join("monsters.csv");
+        let res = parse_config("config/monsters.csv", "client", &path);
+        let table = res.assets.iter().find(|a| a.kind == "config_table").unwrap();
+        assert_eq!(table.meta["headers"], "id,name,attack,hp,quality");
+        assert_eq!(table.meta["rows"], "3");
+        assert_eq!(table.meta["columns"], "5");
+        assert_eq!(table.meta["format"], "csv");
+    }
 }

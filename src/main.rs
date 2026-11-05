@@ -5,6 +5,7 @@ mod csharp;
 mod go_lang;
 mod indexer;
 mod lexer;
+mod lua_lang;
 mod mcp;
 mod model;
 mod projects;
@@ -33,6 +34,10 @@ fn usage() {
          \n\
          codegraph233 index  [--root PATH] [--force] [--jobs N] [--profile P] [--safe] [--quiet]\n\
          codegraph233 status [--root PATH]\n\
+         codegraph233 compact [--root PATH]\n\
+         codegraph233 register|unregister [--root PATH]\n\
+         codegraph233 projects\n\
+         codegraph233 install-mcp [--scope global|project|both]\n\
          codegraph233 version\n"
     );
 }
@@ -97,6 +102,9 @@ fn main() {
                 if cfg.raw.profile.is_empty() { "full" } else { &cfg.raw.profile },
                 cfg.languages()
             );
+            if st.stale {
+                println!("index:    stale schema (run `codegraph233 index` to rebuild)");
+            }
             if !st.exists {
                 println!("index:    not built (run `codegraph233 index`)");
                 return;
@@ -142,6 +150,39 @@ fn main() {
                 }
             }
         }
+        "compact" => {
+            let cfg = match config::load(&root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let db = cfg.db_path();
+            if !db.is_file() {
+                eprintln!("error: no index at {}", db.display());
+                std::process::exit(1);
+            }
+            let before = std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0);
+            let store = match store::Store::open(&db, false) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = store.compact() {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+            drop(store);
+            let after = std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0);
+            println!(
+                "compacted: {:.1} MB -> {:.1} MB",
+                before as f64 / 1_048_576.0,
+                after as f64 / 1_048_576.0
+            );
+        }
         "register" => {
             let dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let target = arg_value(&rest, "--root").map(PathBuf::from).unwrap_or(dir);
@@ -175,19 +216,58 @@ fn main() {
             }
         }
         "serve" | "mcp" => {
-            let cfg = match config::load(&root) {
+            let mut sel = arg_value(&rest, "--project").unwrap_or_default();
+            if sel.is_empty() {
+                sel = std::env::var("CODEGRAPH233_PROJECT").unwrap_or_default();
+            }
+            let mut cfg = match config::load(&root) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
+                    // Global installs start `serve` from an arbitrary working
+                    // directory; fall back to the registry when the cwd has no
+                    // project config.
+                    let reg = projects::load();
+                    let pick = if !sel.trim().is_empty() {
+                        reg.projects
+                            .iter()
+                            .find(|p| {
+                                p.name.eq_ignore_ascii_case(sel.trim())
+                                    || projects::same_root(&p.root, sel.trim())
+                                    || p.root.to_ascii_lowercase().contains(&sel.trim().to_ascii_lowercase())
+                            })
+                            .cloned()
+                    } else if reg.projects.len() == 1 {
+                        reg.projects.first().cloned()
+                    } else {
+                        None
+                    };
+                    match pick {
+                        Some(p) => match config::load(std::path::Path::new(&p.root)) {
+                            Ok(c) => c,
+                            Err(e2) => {
+                                eprintln!("error: {e}; registry project {}: {e2}", p.root);
+                                std::process::exit(1);
+                            }
+                        },
+                        None => {
+                            eprintln!(
+                                "error: {e}\nset CODEGRAPH233_PROJECT, pass --root <project>, or run `codegraph233 install-mcp --scope project`"
+                            );
+                            std::process::exit(1);
+                        }
+                    }
                 }
             };
+            if let Some(p) = arg_value(&rest, "--profile") {
+                cfg.raw.profile = p;
+                cfg.features = config::resolve_features(&cfg.raw);
+            }
             if let Err(e) = mcp::serve(cfg) {
                 eprintln!("server error: {e}");
                 std::process::exit(1);
             }
         }
-        "version" | "--version" | "-v" => println!("codegraph233 0.2.0 (rust)"),
+        "version" | "--version" | "-v" => println!("codegraph233 0.3.0 (rust)"),
         _ => usage(),
     }
 }

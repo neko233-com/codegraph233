@@ -2,7 +2,7 @@
 
 **AST GraphRAG for game projects — Rust 实现。**
 
-索引客户端 C#（后续阶段补齐 Go / Rust / TypeScript）、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
+索引客户端 C# / Go / Rust / TypeScript / Lua、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
 
 ## 能力（Rust 实现）
 
@@ -12,14 +12,16 @@
 | Go 前端（package / struct / interface / func / method / 跨包 receiver） | ✅ |
 | Rust 前端（mod / struct / enum / trait / impl / fn / use 别名） | ✅ |
 | TypeScript 前端（class / interface / enum / function / import 别名 / extends / implements） | ✅ |
+| Lua 前端（模块函数 / `a.b` 与 `a:b` 方法 / local 函数与表 / require / 调用） | ✅ |
 | prefab / scene（GameObject 层级、m_Script、嵌套 prefab、guid 引用） | ✅ |
 | shader（Shader / property / include / multi_compile 关键字 / HLSL 函数） | ✅ |
 | 媒体资产（图片宽高、音频采样率/码率/时长、视频时长、字体字形数、Spine atlas/skel） | ✅ |
-| 配置表（xlsx / csv / tsv / json，表头与行数） | ✅ |
+| 配置表（xlsx / csv / tsv / json，表头与行数、读取点探测） | ✅ |
 | guid 映射（编辑器导出 TSV/CSV/JSON + 明文 `.meta` 补充 + 资产边物化） | ✅ |
 | 增量索引（mtime/size）、prune、并行绑定 | ✅ |
-| CLI：`init` / `index` / `status` / `serve` / `install-mcp` | ✅ |
-| MCP stdio + 14 个工具 | ✅ |
+| 增量重绑定（小 delta 只重算相关边，结果与全量重建一致） | ✅ |
+| CLI：`init` / `index` / `status` / `compact` / `register` / `projects` / `install-mcp` | ✅ |
+| MCP stdio + 23 个工具 | ✅ |
 | 多项目（注册表 `~/.codegraph233/projects.json`、工具 `project` 参数、`cg233_projects`） | ✅ |
 
 ## 安装（全局一次）
@@ -58,11 +60,10 @@ codegraph233 serve       # MCP stdio（客户端会自动拉起）
 
 | 指标 | 数值 |
 | --- | --- |
-| 全量索引（Rust） | **50 s**（Go 版 65 s / 48,101 文件） |
-| 仅 C#（11,418 文件） | **16 s**（Go 版同任务约 40–50 s） |
+| 全量索引（Rust） | 见 [docs/benchmarks.md](docs/benchmarks.md) |
+| 无改动增量 | < 10 ms（不解析、不重绑定） |
+| 单文件增量 | 只重算该文件相关边（`rebind=incremental`） |
 | 产物 | 356k symbols / 2.17M refs / 990k edges / 40,116 assets / 27,716 guid |
-| 解析（33,755 文件） | 168 ms（Go 447 ms） |
-| 写库（100 万 refs + 80 万 edges） | 1.37 s（Go 9.54 s，**7×**） |
 | 无 GC | ✅（Rust 无 GC，Go 版 GC 本身也只占 0% CPU） |
 
 RSS 仍由 SQLite 页缓存决定（~2.4GB 量级），换语言不会改变这一点。
@@ -86,12 +87,20 @@ RSS 仍由 SQLite 页缓存决定（~2.4GB 量级），换语言不会改变这�
 ```
 
 * `profile`：`full` / `game` / `code` / `minimal`；`features` 可按项覆盖。
-* `languages` 省略默认 `["csharp"]`；`["auto"]` 表示全部已实现前端（阶段 2 生效）。
-* 索引产物：`.codegraph233/index.db`（gitignore，可重建）。
+* `languages` 省略默认 `["csharp"]`；`["auto"]` 表示全部已实现前端（csharp / go / rust / typescript / lua）。
+* 索引产物：`.codegraph233/index.db`（gitignore，可重建）。schema 版本变化时 `index` 会自动重建，`status` 会提示 `stale schema`。
+* `codegraph233 compact`：`ANALYZE` + `VACUUM`，回收增量索引产生的空闲页。
 
-## MCP 工具
+## MCP 工具（23）
 
-`cg233_status` / `cg233_index` / `cg233_projects` / `cg233_find_symbol` / `cg233_get_symbol` / `cg233_file_outline` / `cg233_find_referencing_symbols` / `cg233_call_graph` / `cg233_impact` / `cg233_search_pattern` / `cg233_asset_search` / `cg233_asset_info` / `cg233_asset_refs` / `cg233_guid_lookup` / `cg233_project_health`
+代码图：`cg233_status` / `cg233_index` / `cg233_overview` / `cg233_projects` / `cg233_project_health` /
+`cg233_find_symbol` / `cg233_get_symbol` / `cg233_symbol_path` / `cg233_file_outline` /
+`cg233_find_referencing_symbols` / `cg233_call_graph` / `cg233_impact` / `cg233_search_pattern`
+
+资产图：`cg233_asset_search` / `cg233_asset_info` / `cg233_asset_refs` / `cg233_asset_tree` /
+`cg233_asset_stats` / `cg233_asset_orphans` / `cg233_guid_lookup`
+
+游戏数据：`cg233_shader_info` / `cg233_config_tables` / `cg233_config_readers`
 
 所有工具都接受可选 `project`（项目名 / 根路径 / 路径片段）。
 

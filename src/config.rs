@@ -237,16 +237,19 @@ impl Config {
             return vec!["csharp".into()];
         }
         if out.iter().any(|s| s == "auto") {
-            return vec!["csharp".into(), "go".into(), "rust".into(), "typescript".into()];
+            return vec![
+                "csharp".into(),
+                "go".into(),
+                "rust".into(),
+                "typescript".into(),
+                "lua".into(),
+            ];
         }
         out.dedup();
         out
     }
 
     pub fn language_enabled(&self, lang: &str) -> bool {
-        if lang == "lua" {
-            return false;
-        }
         self.languages().iter().any(|l| l == lang)
     }
 

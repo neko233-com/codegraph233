@@ -303,7 +303,6 @@ impl<'a> Parser<'a> {
     fn add_symbol(&mut self, kind: &str, name: &str, qual: &str, ns: &str, start: i32, end: i32, sig: String, mods: String, params: i32, container: &str) {
         self.res.symbols.push(Symbol {
             key: symbol_key(qual, kind, start),
-            root: self.res.root.clone(),
             lang: "csharp".into(),
             kind: kind.to_string(),
             name: name.to_string(),
@@ -325,7 +324,6 @@ impl<'a> Parser<'a> {
         }
         self.res.refs.push(Ref {
             src_key: src_key.to_string(),
-            root: self.res.root.clone(),
             name: name.to_string(),
             kind: kind.to_string(),
             receiver_type: recv_type.to_string(),

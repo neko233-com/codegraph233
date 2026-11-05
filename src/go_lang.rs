@@ -54,7 +54,6 @@ impl<'a> Parser<'a> {
     fn add_symbol(&mut self, kind: &str, name: &str, qual: &str, line: i32, end: i32, sig: String, params: i32, container: &str) {
         self.res.symbols.push(Symbol {
             key: symbol_key(qual, kind, line),
-            root: self.res.root.clone(),
             lang: "go".into(),
             kind: kind.to_string(),
             name: name.to_string(),
@@ -76,7 +75,6 @@ impl<'a> Parser<'a> {
         }
         self.res.refs.push(Ref {
             src_key: src_key.to_string(),
-            root: self.res.root.clone(),
             name: name.to_string(),
             kind: kind.to_string(),
             receiver_type: rtype.to_string(),

@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &100000
+GameObject:
+  m_ObjectHideFlags: 0
+  m_Name: HeroRoot
+  m_Component:
+  - component: {fileID: 400000}
+  m_IsActive: 1
+--- !u!4 &400000
+Transform:
+  m_GameObject: {fileID: 100000}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+--- !u!114 &11400000
+MonoBehaviour:
+  m_GameObject: {fileID: 100000}
+  m_Script: {fileID: 11500000, guid: 11111111111111111111111111111111, type: 3}
+--- !u!1 &100001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_Name: HeroBody
+  m_Component:
+  - component: {fileID: 400001}
+  m_IsActive: 1
+--- !u!4 &400001
+Transform:
+  m_GameObject: {fileID: 100001}
+  m_Father: {fileID: 400000}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+--- !u!114 &11400001
+MonoBehaviour:
+  m_GameObject: {fileID: 100001}
+  m_Script: {fileID: 11500000, guid: 22222222222222222222222222222222, type: 3}
+  m_Materials:
+  - {fileID: 2100000, guid: 33333333333333333333333333333333, type: 2}

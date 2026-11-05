@@ -56,6 +56,10 @@ fn normalize(root: &str) -> String {
     s.trim_start_matches("//?/").to_string()
 }
 
+pub fn same_root(a: &str, b: &str) -> bool {
+    normalize(a) == normalize(b)
+}
+
 pub fn add(reg: &mut Registry, root: &str) -> bool {
     let norm = normalize(root);
     if reg.projects.iter().any(|p| normalize(&p.root) == norm) {

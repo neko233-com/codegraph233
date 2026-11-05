@@ -1,7 +1,8 @@
 {
   "version": 1,
   "strategy": "auto",
-  "description": "multi-language smoke fixture (C# / Go / Rust / TypeScript)",
+  "description": "multi-language + game-asset smoke fixture (C# / Go / Rust / TypeScript / Lua, prefab / shader / config)",
   "roots": [{ "key": "client", "path": ".", "role": "frontend" }],
-  "languages": ["csharp", "go", "rust", "typescript"]
+  "languages": ["csharp", "go", "rust", "typescript", "lua"],
+  "config_dirs": ["config"]
 }

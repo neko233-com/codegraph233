@@ -38,7 +38,7 @@
 | Go | optional | 已实现 | 后端场景：包路径跨包解析、receiver/字段类型推断、结构体嵌入（`embeds`）。默认**不开启**，需在 `languages` 显式加入 |
 | Rust | optional | 已实现 | `mod/struct/enum/trait/impl/fn/type/const`；`use` 别名展开、`crate::/self::/super::` 路径、impl 方法归属、trait 实现、`let x: T`/`T::new()` 类型推断 |
 | TypeScript / JavaScript | optional | 已实现 | `class/interface/type/enum/function`、构造与箭头函数、`import` 别名（相对路径解析到模块）、`extends/implements`、`new`/成员调用 |
-| Lua | planned | **未实现** | 仅预留策略位与配置项；当前版本遇到 `.lua` 不索引、不报错，`status` 中标注 planned |
+| Lua | optional | 已实现 | `function a.b` / `function a:b` / `local function` / `local x = function` / 表构造 / `require`；`--` 与 `--[[ ]]` 注释、`[[ ]]` 长字符串；块匹配支持 if/for/while/repeat/standalone do |
 
 ### 3.2 引擎 / 工程策略
 
@@ -76,8 +76,8 @@
 * 写库模式：`single`（默认，整轮一个事务，实测 64.9s）> `batch`（每 300 文件提交，69.4s）> `none`（无事务，155.1s）。无事务不会更快。
 * 调度：`index --low-priority`（Windows BELOW_NORMAL）避免抢编辑器 CPU；索引期 GC 目标 250。
 * 多项目：`~/.codegraph233/projects.json` 注册表 + 每项目独立 DB（懒加载），工具统一接受 `project` 选择器。
-* 绑定阶段：分页读取（10 万/页）、按 CPU 并行解析、只写目标发生变化的引用。
-* 空间：`codegraph233 compact` 执行 `ANALYZE` + `VACUUM`；本仓实测 1,019MB → 562MB（-45%）。
+* 绑定阶段：分页读取、按 CPU 并行解析、只写目标发生变化的引用。
+* 增量重绑定：小 delta（≤2,000 文件且 ≤1/3 总数）只重绑定变更文件的 refs、指向其旧/新符号的 refs、以及名字命中新符号的未解析 refs；边按受影响符号集合删除后重建。实测 49,599 文件单文件改动 3.7s（原全局重绑定 36s），结果与 `--force` 全量重建逐边一致（`cargo test` 覆盖）。\n* 无改动调用直接返回（<10ms），不再做全局重绑定。\n* 空间：refs 去掉 `src_key`/`receiver`/`root` 冗余列、置信度改小整数、签名截断首行 200 字符、`namespace_hint` 与符号 namespace 相同时不落库；团结工程（49,599 文件）实测 918MB → 394MB，`codegraph233 compact`（ANALYZE + VACUUM）后 371.5MB。
 * 非目标补充：不追求"崩溃后索引完好"，只保证"索引可无副作用重建"；资产元信息不替代 AssetDatabase 的导入设置。
 
 ## 3.6 技术选型：Go vs Rust（实测）
@@ -130,7 +130,7 @@
 | 维度 | 标准 |
 | --- | --- |
 | 覆盖率 | 抽样 100 个 C# 类型/方法：声明召回 ≥ 95%；调用边召回 ≥ 80%（含 `name` 级） |
-| 索引速度 | 4.8 万文件全量 ≤ 90 秒（快速档）；无改动增量 ≤ 20 秒 |
+| 索引速度 | 4.8 万文件全量 ≤ 90 秒（实测 20.2s，49,599 文件）；无改动增量 < 10ms；单文件增量 3.7s |
 | 查询延迟 | 单次 `find_symbol` / `file_outline` < 200ms（30 万符号级索引） |
 | 内存 | 全量重建峰值 ≤ 4GB；稳态查询 < 500MB |
 | 稳定性 | 单文件解析失败不影响整批；索引中断后可增量续跑 |
@@ -140,12 +140,13 @@
 ## 8. 演进路线
 
 **P0（已完成，2026-11-05）**
-- C# / Go / Rust / TypeScript 语义图、prefab/scene、shader、配表、多根、引擎识别、SQLite 增量、17 个 MCP 工具、一键安装、7 客户端接入（项目级 / 全局）。
+- C# / Go / Rust / TypeScript / Lua 语义图、prefab/scene、shader、配表、多根、引擎识别、SQLite 增量、一键安装、7 客户端接入（项目级 / 全局）。
 
-**P1（下一步）**
-- 增量重绑定：只重算变更文件相关边（当前无改动也要 36s，因为全局 rebind）。
-- 索引体积：裁剪低价值 `references`、按需压缩，目标 DB < 400MB。
-- 语言策略落地：`lua` 前端（tree-sitter 或自研 scanner）+ 对应资产（lua 配置表、热更脚本）。
+**P1（已完成，2026-11-05）**
+- 增量重绑定：小 delta 只重绑定受影响的 refs/edges，单文件改动 3.7s（原 36s）；与全量重建逐边一致（自动化测试）。
+- 索引体积：refs 去冗余列 + 置信度整数化 + 签名截断 + 冗余 namespace 不落库；团结工程 918MB → 394MB（compact 后 371.5MB），达到 < 400MB。
+- 语言策略落地：`lua` 前端（自研 scanner）+ 调用/require 边；词法器新增 Lua 行注释、块注释、长字符串。
+- MCP 工具补齐到 23 个：新增 `cg233_overview` / `cg233_symbol_path` / `cg233_asset_tree` / `cg233_asset_stats` / `cg233_asset_orphans` / `cg233_shader_info` / `cg233_config_tables` / `cg233_config_readers`。
 
 **P2（预留）**
 - UE：C++ 粗粒度图、`.uasset` 名称层、蓝图引用边。

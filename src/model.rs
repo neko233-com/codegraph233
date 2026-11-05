@@ -1,7 +1,6 @@
 #[derive(Debug, Clone, Default)]
 pub struct Symbol {
     pub key: String,
-    pub root: String,
     pub lang: String,
     pub kind: String,
     pub name: String,
@@ -19,7 +18,6 @@ pub struct Symbol {
 #[derive(Debug, Clone, Default)]
 pub struct Ref {
     pub src_key: String,
-    pub root: String,
     pub name: String,
     pub kind: String,
     pub receiver_type: String,
@@ -57,6 +55,9 @@ pub struct GuidRow {
     pub kind: String,
 }
 
+/// One file's parse result. `root`/`lang`/`errors` are diagnostics: the
+/// indexer takes those from the scan entry, but tooling and tests use them.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct FileParse {
     pub rel_path: String,
@@ -88,7 +89,6 @@ pub struct SymbolRow {
 pub struct RefRow {
     pub id: i64,
     pub src_id: i64,
-    pub root: String,
     pub name: String,
     pub receiver_type: String,
     pub kind: String,

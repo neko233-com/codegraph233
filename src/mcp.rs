@@ -24,8 +24,8 @@ fn tool(name: &str, desc: &str, props: Value, required: Value) -> Value {
 
 fn tools() -> Vec<Value> {
     let mut defs = vec![
-        tool("cg233_status", "Index status: profile, languages, counts, db path. Call first.", json!({}), json!([])),
-        tool("cg233_index", "Build or incrementally update the index (C# front-end in this build).", json!({
+        tool("cg233_status", "Index status: profile, languages, counts, db path, schema freshness. Call first.", json!({}), json!([])),
+        tool("cg233_index", "Build or incrementally update the index (C#/Go/Rust/TS/Lua front-ends).", json!({
             "force": {"type":"boolean","description":"Re-parse every file"},
             "jobs": {"type":"integer","description":"Parallel workers"}
         }), json!([])),
@@ -53,6 +53,10 @@ fn tools() -> Vec<Value> {
             "pattern": {"type":"string"}, "glob": {"type":"string"}, "root": {"type":"string"},
             "max_results": {"type":"integer"}, "context_lines": {"type":"integer"}
         }), json!(["pattern"])),
+        tool("cg233_overview", "Orientation: languages, symbol kinds, top namespaces, asset kinds, health counts.", json!({}), json!([])),
+        tool("cg233_symbol_path", "Namespace -> owning types -> symbol chain for one symbol id.", json!({
+            "id": {"type":"integer"}
+        }), json!(["id"])),
         tool("cg233_asset_search", "Search prefab/scene/shader/config assets by name/path/kind.", json!({
             "name": {"type":"string"}, "kind": {"type":"string"}, "root": {"type":"string"},
             "path": {"type":"string"}, "limit": {"type":"integer"}
@@ -63,6 +67,24 @@ fn tools() -> Vec<Value> {
         tool("cg233_asset_refs", "Asset relationships (out/in) for a key.", json!({
             "key": {"type":"string"}, "direction": {"type":"string"}, "limit": {"type":"integer"}
         }), json!(["key"])),
+        tool("cg233_asset_tree", "Prefab/scene GameObject hierarchy with per-node script and asset edges.", json!({
+            "key": {"type":"string"}, "path": {"type":"string"}, "limit": {"type":"integer"}
+        }), json!([])),
+        tool("cg233_asset_stats", "Asset counts and bytes per kind, plus the largest assets.", json!({
+            "limit": {"type":"integer"}
+        }), json!([])),
+        tool("cg233_asset_orphans", "Unreferenced file-level assets, largest first.", json!({
+            "kind": {"type":"string"}, "limit": {"type":"integer"}
+        }), json!([])),
+        tool("cg233_shader_info", "ShaderLab detail: properties, includes, keywords, HLSL functions, users.", json!({
+            "key": {"type":"string"}, "path": {"type":"string"}, "limit": {"type":"integer"}
+        }), json!([])),
+        tool("cg233_config_tables", "Config tables (xlsx sheets, csv/tsv, json) with headers and row counts.", json!({
+            "path": {"type":"string"}, "limit": {"type":"integer"}
+        }), json!([])),
+        tool("cg233_config_readers", "Code sites that mention a config table (load / hot-reload probes).", json!({
+            "table": {"type":"string"}, "limit": {"type":"integer"}
+        }), json!(["table"])),
         tool("cg233_guid_lookup", "Resolve a guid or asset path and list its references.", json!({
             "guid": {"type":"string"}, "limit": {"type":"integer"}
         }), json!(["guid"])),
@@ -87,21 +109,22 @@ fn call(default_cfg: &Config, name: &str, args: &Value) -> Result<Value, String>
     if name == "cg233_projects" {
         let reg = crate::projects::load();
         let mut rows: Vec<Value> = Vec::new();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let default_dir = default_cfg.dir.to_string_lossy().to_string();
         for p in &reg.projects {
-            seen.insert(p.root.clone());
             let cfg = crate::config::load(std::path::Path::new(&p.root)).ok();
             let st = cfg.as_ref().map(crate::indexer::status);
             rows.push(json!({
                 "name": p.name, "root": p.root,
-                "default": p.root == default_dir,
+                "default": crate::projects::same_root(&p.root, &default_dir),
                 "indexed": st.as_ref().map(|s| s.exists).unwrap_or(false),
                 "files": st.as_ref().map(|s| s.files).unwrap_or(0),
                 "symbols": st.as_ref().map(|s| s.symbols).unwrap_or(0),
             }));
         }
-        if !seen.contains(&default_dir) {
+        if !rows
+            .iter()
+            .any(|r| r["default"].as_bool().unwrap_or(false))
+        {
             let st = crate::indexer::status(default_cfg);
             rows.push(json!({
                 "name": std::path::Path::new(&default_dir).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
@@ -134,15 +157,19 @@ fn call(default_cfg: &Config, name: &str, args: &Value) -> Result<Value, String>
         return Ok(json!({
             "files": stats.files, "changed": stats.changed, "removed": stats.removed,
             "symbols": stats.symbols, "refs": stats.refs, "edges": stats.edges,
-            "unresolved_refs": stats.unresolved, "elapsed_ms": stats.elapsed_ms,
+            "assets": stats.assets, "unresolved_refs": stats.unresolved,
+            "elapsed_ms": stats.elapsed_ms,
         }));
     }
     if name == "cg233_status" {
         let st = indexer::status(cfg);
         return Ok(json!({
             "config": cfg.file.display().to_string(),
-            "db": st.db, "exists": st.exists, "files": st.files, "symbols": st.symbols,
-            "refs": st.refs, "edges": st.edges, "indexed_at": st.indexed_at,
+            "db": st.db, "exists": st.exists, "stale": st.stale,
+            "files": st.files, "symbols": st.symbols,
+            "refs": st.refs, "edges": st.edges, "assets": st.assets,
+            "guid_entries": st.guid_entries,
+            "indexed_at": st.indexed_at,
             "profile": cfg.raw.profile, "languages": cfg.languages(),
         }));
     }
@@ -212,6 +239,34 @@ fn call(default_cfg: &Config, name: &str, args: &Value) -> Result<Value, String>
             &a_str(args, "path"),
             a_i64(args, "limit", 50)
         )?)),
+        "cg233_overview" => eng.overview(&a_str(args, "root")),
+        "cg233_symbol_path" => eng.symbol_path(a_i64(args, "id", 0)),
+        "cg233_asset_tree" => eng.asset_tree(
+            &a_str(args, "key"),
+            &a_str(args, "path"),
+            a_i64(args, "limit", 2000),
+        ),
+        "cg233_asset_stats" => eng.asset_stats(&a_str(args, "root"), a_i64(args, "limit", 20)),
+        "cg233_asset_orphans" => Ok(json!(eng.asset_orphans(
+            &a_str(args, "root"),
+            &a_str(args, "kind"),
+            a_i64(args, "limit", 50)
+        )?)),
+        "cg233_shader_info" => eng.shader_info(
+            &a_str(args, "key"),
+            &a_str(args, "path"),
+            a_i64(args, "limit", 100),
+        ),
+        "cg233_config_tables" => Ok(json!(eng.config_tables(
+            &a_str(args, "root"),
+            &a_str(args, "path"),
+            a_i64(args, "limit", 100)
+        )?)),
+        "cg233_config_readers" => eng.config_readers(
+            &a_str(args, "table"),
+            &a_str(args, "root"),
+            a_i64(args, "limit", 50),
+        ),
         "cg233_asset_info" => Ok(eng.asset_info(
             &a_str(args, "key"),
             &a_str(args, "path"),
@@ -260,8 +315,8 @@ pub fn serve(cfg: Config) -> Result<(), String> {
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {"listChanged": false}},
-                    "serverInfo": {"name": "codegraph233", "version": "0.2.0"},
-                    "instructions": "AST GraphRAG (Rust). Call cg233_status first, build with cg233_index, then cg233_find_symbol / cg233_call_graph / cg233_asset_* / cg233_guid_lookup."
+                    "serverInfo": {"name": "codegraph233", "version": "0.3.0"},
+                    "instructions": "AST GraphRAG (Rust). cg233_status first, cg233_index to build/update. Code: cg233_overview / cg233_find_symbol / cg233_symbol_path / cg233_call_graph / cg233_impact. Assets: cg233_asset_search / cg233_asset_tree / cg233_asset_refs / cg233_asset_orphans. Data: cg233_config_tables / cg233_config_readers. Physics: cg233_shader_info. guid: cg233_guid_lookup."
                 }
             }),
             "ping" => json!({"jsonrpc":"2.0","id":id,"result":{}}),

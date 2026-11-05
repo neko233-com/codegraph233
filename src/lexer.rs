@@ -24,6 +24,10 @@ pub struct Options {
     pub rust_literals: bool,
     pub hash_directives: bool,
     pub backtick_strings: bool,
+    /// Lua: `--` line comments and `--[[ ... ]]` block comments.
+    pub dash_comments: bool,
+    /// Lua: `[[ ... ]]` / `[=[ ... ]=]` long strings.
+    pub long_brackets: bool,
 }
 
 fn is_ident_start(c: u8) -> bool {
@@ -68,6 +72,74 @@ pub fn tokenize(src: &[u8], opt: Options) -> Vec<Tok> {
             continue;
         }
         line_start = false;
+        // Lua long bracket: [[ ... ]] or [=[ ... ]=]
+        if opt.long_brackets && c == b'[' {
+            let mut k = i + 1;
+            let mut eq = 0usize;
+            while k < n && src[k] == b'=' {
+                eq += 1;
+                k += 1;
+            }
+            if k < n && src[k] == b'[' {
+                k += 1;
+                let mut close = String::from("]");
+                for _ in 0..eq {
+                    close.push('=');
+                }
+                close.push(']');
+                let needle = close.as_bytes();
+                while k < n {
+                    if src[k] == b'\n' {
+                        line += 1;
+                    }
+                    if k + needle.len() <= n && &src[k..k + needle.len()] == needle {
+                        k += needle.len();
+                        break;
+                    }
+                    k += 1;
+                }
+                i = k;
+                continue;
+            }
+        }
+        if opt.dash_comments && c == b'-' && i + 1 < n && src[i + 1] == b'-' {
+            let mut k = i + 2;
+            // --[[ block ]] / --[=[ block ]=]
+            if k < n && src[k] == b'[' {
+                let mut m = k + 1;
+                let mut eq = 0usize;
+                while m < n && src[m] == b'=' {
+                    eq += 1;
+                    m += 1;
+                }
+                if m < n && src[m] == b'[' {
+                    m += 1;
+                    let mut close = String::from("]");
+                    for _ in 0..eq {
+                        close.push('=');
+                    }
+                    close.push(']');
+                    let needle = close.as_bytes();
+                    while m < n {
+                        if src[m] == b'\n' {
+                            line += 1;
+                        }
+                        if m + needle.len() <= n && &src[m..m + needle.len()] == needle {
+                            m += needle.len();
+                            break;
+                        }
+                        m += 1;
+                    }
+                    i = m;
+                    continue;
+                }
+            }
+            while k < n && src[k] != b'\n' {
+                k += 1;
+            }
+            i = k;
+            continue;
+        }
         if c == b'/' && i + 1 < n && src[i + 1] == b'/' {
             while i < n && src[i] != b'\n' {
                 i += 1;
