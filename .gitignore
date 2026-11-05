@@ -1,9 +1,10 @@
 # build output
 /dist/
+/target/
 *.exe
 
 # local index data (never commit)
-/.game-project-graph/
+/.codegraph233/
 index.db
 index.db-wal
 index.db-shm
