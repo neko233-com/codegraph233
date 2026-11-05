@@ -14,6 +14,7 @@ import (
 
 	"github.com/neko233-com/game-project-graph/internal/config"
 	"github.com/neko233-com/game-project-graph/internal/detect"
+	"github.com/neko233-com/game-project-graph/internal/model"
 	"github.com/neko233-com/game-project-graph/internal/store"
 )
 
@@ -101,7 +102,7 @@ func (e *Engine) SearchSymbols(pattern string, kinds []string, lang, root, pathF
 		return nil, err
 	}
 	defer rows.Close()
-	var out []SymbolHit
+	out := []SymbolHit{}
 	for rows.Next() {
 		h, err := scanSymbol(rows)
 		if err != nil {
@@ -198,7 +199,7 @@ func (e *Engine) FileOutline(pathFilter, root string, limit int) ([]SymbolHit, e
 		return nil, err
 	}
 	defer rows.Close()
-	var out []SymbolHit
+	out := []SymbolHit{}
 	for rows.Next() {
 		h, err := scanSymbol(rows)
 		if err != nil {
@@ -239,7 +240,7 @@ func (e *Engine) Related(id int64, direction string, kinds []string, depth int, 
 	}
 	seen := map[int64]bool{id: true}
 	current := []int64{id}
-	var out []EdgeHit
+	out := []EdgeHit{}
 	for d := 1; d <= depth; d++ {
 		var next []int64
 		for _, cur := range current {
@@ -313,7 +314,7 @@ func (e *Engine) RefsTo(id int64, limit int) ([]EdgeHit, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []EdgeHit
+	out := []EdgeHit{}
 	for rows.Next() {
 		var h EdgeHit
 		if err := rows.Scan(&h.ID, &h.Kind, &h.Name, &h.Qualname, &h.Namespace, &h.Lang, &h.Root,
@@ -432,7 +433,9 @@ type Impact struct {
 	Files     []string   `json:"affected_files"`
 }
 
-// AnalyzeImpact resolves the impact set for a path or symbol id.
+// AnalyzeImpact resolves the impact set for a path or symbol id.  For a type,
+// the impact of all of its members is aggregated: callers reference methods and
+// fields far more often than the type declaration itself.
 func (e *Engine) AnalyzeImpact(symbolID int64, pathFilter string, depth int) (*Impact, error) {
 	if symbolID == 0 && pathFilter != "" {
 		hits, err := e.FileOutline(pathFilter, "", 2000)
@@ -446,29 +449,69 @@ func (e *Engine) AnalyzeImpact(symbolID int64, pathFilter string, depth int) (*I
 	if symbolID == 0 {
 		return nil, fmt.Errorf("impact: need a symbol id or an existing path")
 	}
-	direct, err := e.Related(symbolID, "in", nil, 1, 500)
-	if err != nil {
-		return nil, err
+	subject := ""
+	ids := []int64{symbolID}
+	if h, err := e.GetSymbol(symbolID); err == nil {
+		subject = h.Qualname
+		if isTypeKind(h.Kind) {
+			rows, qErr := e.St.DB().Query(`SELECT id FROM symbols WHERE container = ? LIMIT 2000`, h.Qualname)
+			if qErr == nil {
+				for rows.Next() {
+					var id int64
+					if rows.Scan(&id) == nil {
+						ids = append(ids, id)
+					}
+				}
+				rows.Close()
+			}
+		}
+	} else {
+		subject = pathFilter
 	}
-	trans, _ := e.Related(symbolID, "in", nil, depth, 1000)
+	direct := []EdgeHit{}
+	trans := []EdgeHit{}
+	seen := map[int64]bool{}
+	for _, id := range ids {
+		more, err := e.Related(id, "in", nil, 1, 500)
+		if err != nil {
+			return nil, err
+		}
+		for _, h := range more {
+			if !seen[h.ID] {
+				seen[h.ID] = true
+				direct = append(direct, h)
+			}
+		}
+		if depth > 1 {
+			deeper, err := e.Related(id, "in", nil, depth, 1000)
+			if err != nil {
+				return nil, err
+			}
+			for _, h := range deeper {
+				if !seen[h.ID] {
+					seen[h.ID] = true
+					trans = append(trans, h)
+				}
+			}
+		}
+	}
 	fileSet := map[string]bool{}
+	for _, h := range direct {
+		if h.Path != "" {
+			fileSet[h.Path] = true
+		}
+	}
 	for _, h := range trans {
 		if h.Path != "" {
 			fileSet[h.Path] = true
 		}
 	}
-	var files []string
+	files := make([]string, 0, len(fileSet))
 	for f := range fileSet {
 		files = append(files, f)
 	}
 	sort.Strings(files)
-	subj := ""
-	if h, err := e.GetSymbol(symbolID); err == nil {
-		subj = h.Qualname
-	} else {
-		subj = pathFilter
-	}
-	return &Impact{Subject: subj, Direct: direct, Transitive: trans, Files: files}, nil
+	return &Impact{Subject: subject, Direct: direct, Transitive: trans, Files: files}, nil
 }
 
 // PatternHit is one grep-style match with context.
@@ -517,7 +560,7 @@ func (e *Engine) SearchPattern(pattern, glob, root string, maxResults, contextLi
 	}
 	rows.Close()
 
-	var out []PatternHit
+	out := []PatternHit{}
 	for _, fr := range files {
 		data, err := os.ReadFile(e.absOf(fr.root, fr.path))
 		if err != nil || len(data) > 32<<20 {
@@ -596,7 +639,7 @@ func (e *Engine) SearchAssets(name, kind, root, pathFilter string, limit int) ([
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AssetHit
+	out := []AssetHit{}
 	for rows.Next() {
 		var h AssetHit
 		var meta string
@@ -640,7 +683,7 @@ func (e *Engine) AssetEdges(key, direction string, limit int) ([]AssetEdgeHit, e
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AssetEdgeHit
+	out := []AssetEdgeHit{}
 	for rows.Next() {
 		var h AssetEdgeHit
 		if err := rows.Scan(&h.Src, &h.Dst, &h.Kind, &h.Detail, &h.Line, &h.SrcName, &h.DstName); err != nil {
@@ -700,7 +743,7 @@ func (e *Engine) ConfigTables(filter, root string, limit int) ([]ConfigTable, er
 	if err != nil {
 		return nil, err
 	}
-	var out []ConfigTable
+	out := []ConfigTable{}
 	for _, a := range assets {
 		headers := []string{}
 		if h := a.Meta["headers"]; h != "" {
@@ -730,7 +773,7 @@ func (e *Engine) ConfigReaders(table string, limit int) ([]ConfigReader, bool, e
 		limit = 100
 	}
 	apis := []string{"GetDataById", "GetConfig", "LoadConfig", "ConfigManager", "ReloadConfig", "Config233"}
-	var out []ConfigReader
+	out := []ConfigReader{}
 	seen := map[int64]bool{}
 	for _, api := range apis {
 		hits, err := e.SearchSymbols(api, nil, "", "", "", limit)
@@ -860,6 +903,8 @@ func (e *Engine) countBy(q string) map[string]int {
 	}
 	return out
 }
+
+func isTypeKind(kind string) bool { return model.IsTypeKind(kind) }
 
 func placeholders(n int) string {
 	if n <= 0 {
