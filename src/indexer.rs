@@ -1,3 +1,4 @@
+use crate::assets;
 use crate::binder::Binder;
 use crate::config::{is_excluded, Config};
 use crate::model::{symbol_key, FileParse};
@@ -23,6 +24,7 @@ pub struct Stats {
     pub symbols: i64,
     pub refs: i64,
     pub edges: i64,
+    pub assets: i64,
     pub unresolved: usize,
     pub elapsed_ms: u128,
 }
@@ -37,7 +39,43 @@ struct ScanFile {
     mtime: i64,
 }
 
-fn walk(dir: &Path, base: &Path, root_key: &str, excludes: &[String], out: &mut Vec<ScanFile>) {
+fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static str> {
+    let ext = Path::new(rel)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    let f = &cfg.features;
+    match ext.as_str() {
+        "cs" if f.code => Some("csharp"),
+        "go" if f.code => Some("go"),
+        "rs" if f.code => Some("rust"),
+        "ts" | "tsx" | "js" | "jsx" if f.code => Some("typescript"),
+        "prefab" | "unity" if f.prefabs => Some("prefab"),
+        "shader" | "hlsl" | "cginc" | "compute" if f.shaders => Some("shader"),
+        "xlsx" | "csv" | "tsv" if f.config_tables => Some("config"),
+        "json" if f.config_tables => {
+            let abs = Path::new(rel);
+            let under = config_dirs.iter().any(|d| abs.starts_with(d));
+            if under { Some("config") } else { None }
+        }
+        "meta" => {
+            if f.meta {
+                Some("meta")
+            } else {
+                None
+            }
+        }
+        _ => {
+            if f.assets && assets::is_asset_ext(rel) {
+                Some("asset")
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn walk(dir: &Path, base: &Path, root_key: &str, excludes: &[String], cfg: &Config, config_dirs: &[PathBuf], out: &mut Vec<ScanFile>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -53,40 +91,46 @@ fn walk(dir: &Path, base: &Path, root_key: &str, excludes: &[String], out: &mut 
             if is_excluded(&rel, &name, excludes) {
                 continue;
             }
-            walk(&path, base, root_key, excludes, out);
-        } else {
-            let ext = path
-                .extension()
-                .map(|e| e.to_string_lossy().to_ascii_lowercase())
-                .unwrap_or_default();
-            let lang = match ext.as_str() {
-                "cs" => "csharp",
-                "go" => "go",
-                "rs" => "rust",
-                "ts" | "tsx" | "js" | "jsx" => "typescript",
-                _ => continue,
-            };
-            if let Ok(meta) = entry.metadata() {
-                out.push(ScanFile {
-                    root: root_key.to_string(),
-                    abs: path,
-                    rel: String::new(),
-                    lang: lang.to_string(),
-                    size: meta.len() as i64,
-                    mtime: meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_nanos() as i64)
-                        .unwrap_or(0),
-                });
-            }
+            walk(&path, base, root_key, excludes, cfg, config_dirs, out);
+            continue;
+        }
+        let Some(lang) = lang_of(&rel, cfg, config_dirs) else { continue };
+        if matches!(lang, "csharp" | "go" | "rust" | "typescript") && !cfg.language_enabled(lang) {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            out.push(ScanFile {
+                root: root_key.to_string(),
+                abs: path,
+                rel,
+                lang: lang.to_string(),
+                size: meta.len() as i64,
+                mtime: meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos() as i64)
+                    .unwrap_or(0),
+            });
         }
     }
 }
 
 fn collect(cfg: &Config) -> Vec<ScanFile> {
     let excludes = cfg.excludes();
+    let config_dirs: Vec<PathBuf> = cfg
+        .raw
+        .config_dirs
+        .iter()
+        .map(|d| {
+            let p = Path::new(d);
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                cfg.dir.join(p)
+            }
+        })
+        .collect();
     let mut out = Vec::new();
     for r in &cfg.raw.roots {
         let dir = cfg.abs_root(r);
@@ -94,15 +138,86 @@ fn collect(cfg: &Config) -> Vec<ScanFile> {
             continue;
         }
         let mut files = Vec::new();
-        walk(&dir, &dir, &r.key, &excludes, &mut files);
-        for mut f in files {
-            if let Ok(rel) = f.abs.strip_prefix(&dir) {
-                f.rel = rel.to_string_lossy().replace('\\', "/");
+        walk(&dir, &dir, &r.key, &excludes, cfg, &config_dirs, &mut files);
+        out.extend(files);
+    }
+    out
+}
+
+fn go_module_of(abs: &Path) -> String {
+    let mut dir = abs.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    for _ in 0..8 {
+        if let Ok(text) = std::fs::read_to_string(dir.join("go.mod")) {
+            for line in text.lines() {
+                if let Some(v) = line.trim().strip_prefix("module ") {
+                    return v.trim().to_string();
+                }
             }
-            if !cfg.language_enabled(&f.lang) {
-                continue;
+            return String::new();
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    String::new()
+}
+
+fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
+    match f.lang.as_str() {
+        "csharp" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::csharp::parse(&f.rel, &f.root, &data, cfg.features.type_deps),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
+        "go" => match std::fs::read(&f.abs) {
+            Ok(data) => {
+                let module = go_module_of(&f.abs);
+                let rel_dir = Path::new(&f.rel)
+                    .parent()
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                crate::go_lang::parse(&f.rel, &f.root, &module, &rel_dir, &data)
             }
-            out.push(f);
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
+        "rust" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::rust_lang::parse(&f.rel, &f.root, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
+        "typescript" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::ts_lang::parse(&f.rel, &f.root, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
+        "prefab" => match std::fs::read_to_string(&f.abs) {
+            Ok(text) => assets::parse_prefab(&f.rel, &f.root, &text),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
+        "shader" => match std::fs::read_to_string(&f.abs) {
+            Ok(text) => assets::parse_shader(&f.rel, &f.root, &text),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
+        "config" => assets::parse_config(&f.rel, &f.root, &f.abs),
+        "meta" => match std::fs::read_to_string(&f.abs) {
+            Ok(text) => assets::parse_meta(&f.rel, &f.root, &text),
+            Err(_) => FileParse::default(),
+        },
+        _ => assets::parse_media(&f.rel, &f.root, &f.abs),
+    }
+}
+
+fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for g in &cfg.raw.guid_map {
+        let p = Path::new(g);
+        candidates.push(if p.is_absolute() { p.to_path_buf() } else { cfg.dir.join(p) });
+    }
+    candidates.push(cfg.dir.join(".codegraph233").join("guid-map.tsv"));
+    candidates.push(cfg.dir.join("Temp").join("codegraph233-guid-map.tsv"));
+    let mut out = Vec::new();
+    for c in candidates {
+        if c.is_file() {
+            if let Ok(rows) = assets::parse_guid_map_file(&c) {
+                out.extend(rows);
+            }
         }
     }
     out
@@ -111,28 +226,33 @@ fn collect(cfg: &Config) -> Vec<ScanFile> {
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
     let db_path = cfg.db_path();
-    let mut store = Store::open(&db_path, opts.fast)?;
+    let store = Store::open(&db_path, opts.fast)?;
+
+    if cfg.features.guid_map {
+        let rows = load_guid_maps(cfg);
+        if !rows.is_empty() {
+            store.replace_guid_map(&rows)?;
+        }
+    }
 
     let files = collect(cfg);
     let mut present: HashSet<String> = HashSet::new();
     for f in &files {
         present.insert(format!("{}|{}", f.root, f.rel));
     }
-
     let states = store.file_states()?;
-    let mut changed: Vec<ScanFile> = Vec::new();
-    for f in files.iter() {
-        let key = format!("{}|{}", f.root, f.rel);
-        let need = match states.get(&key) {
-            None => true,
-            Some(st) => opts.force || st.size != f.size || st.mtime != f.mtime || st.lang != f.lang,
-        };
-        if need && f.lang == "csharp" {
-            changed.push(f.clone());
-        }
-    }
+    let changed: Vec<ScanFile> = files
+        .iter()
+        .filter(|f| {
+            let key = format!("{}|{}", f.root, f.rel);
+            match states.get(&key) {
+                None => true,
+                Some(st) => opts.force || st.size != f.size || st.mtime != f.mtime || st.lang != f.lang,
+            }
+        })
+        .cloned()
+        .collect();
 
-    // prune rows no longer present
     let mut removed = 0usize;
     let stale: Vec<i64> = states
         .iter()
@@ -140,7 +260,7 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
         .map(|(_, st)| st.id)
         .collect();
     if !stale.is_empty() {
-        let tx = store.conn.transaction().map_err(|e| e.to_string())?;
+        let tx = store.conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for id in &stale {
             Store::delete_file(&tx, *id)?;
         }
@@ -148,7 +268,6 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
         removed = stale.len();
     }
 
-    // parse (parallel)
     let jobs = if opts.jobs > 0 {
         opts.jobs
     } else {
@@ -158,31 +277,18 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
         .num_threads(jobs)
         .build()
         .map_err(|e| e.to_string())?;
-    let type_deps = cfg.features.type_deps;
     let parsed: Vec<FileParse> = pool.install(|| {
         changed
             .par_iter()
-            .map(|f| match std::fs::read(&f.abs) {
-                Ok(data) => crate::csharp::parse(&f.rel, &f.root, &data, type_deps),
-                Err(e) => FileParse {
-                    rel_path: f.rel.clone(),
-                    root: f.root.clone(),
-                    lang: f.lang.clone(),
-                    module: String::new(),
-                    symbols: Vec::new(),
-                    refs: Vec::new(),
-                    errors: vec![e.to_string()],
-                },
-            })
+            .map(|f| parse_file(f, cfg))
             .collect()
     });
 
-    // write in batches
-    const BATCH: usize = 1000;
+    const BATCH: usize = 800;
     let mut idx = 0usize;
     while idx < changed.len() {
         let end = (idx + BATCH).min(changed.len());
-        let tx = store.conn.transaction().map_err(|e| e.to_string())?;
+        let tx = store.conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for k in idx..end {
             let f = &changed[k];
             let res = &parsed[k];
@@ -196,24 +302,37 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
             if let Some(id) = old_id {
                 Store::delete_file(&tx, id)?;
             }
-            let file_id = Store::upsert_file(
-                &tx, &f.root, &f.rel, &f.lang, &res.module, f.size, f.mtime,
-            )?;
+            let file_id = Store::upsert_file(&tx, &f.root, &f.rel, &f.lang, &res.module, f.size, f.mtime)?;
             let ids = Store::insert_symbols(&tx, file_id, &res.symbols)?;
             let mut key_to_id: HashMap<String, i64> = HashMap::with_capacity(res.symbols.len());
             for (i, s) in res.symbols.iter().enumerate() {
                 key_to_id.insert(symbol_key(&s.qualname, &s.kind, s.start_line), ids[i]);
             }
             Store::insert_refs(&tx, file_id, &res.refs, &key_to_id)?;
+            Store::insert_assets_and_edges(&tx, &res.assets, &res.asset_edges)?;
+            if !res.guid_rows.is_empty() {
+                let rows: Vec<crate::model::GuidRow> = res.guid_rows.clone();
+                // plaintext meta mappings only fill gaps
+                let mut stmt = tx
+                    .prepare("INSERT OR IGNORE INTO guid_map(guid, path, name, type) VALUES(?1,?2,?3,?4)")
+                    .map_err(|e| e.to_string())?;
+                for r in rows {
+                    let name = Path::new(&r.path)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let _ = stmt.execute(rusqlite::params![r.guid, r.path, name, r.kind]);
+                }
+            }
         }
         tx.commit().map_err(|e| e.to_string())?;
         idx = end;
     }
 
-    // rebind
+    // binding
     let symbol_rows = store.symbol_rows()?;
     let binder = Binder::new(symbol_rows);
-    let mut refs = store.ref_rows()?;
+    let refs = store.ref_rows()?;
     let resolved: Vec<Option<(i64, &'static str)>> = pool.install(|| {
         refs.par_iter()
             .map(|r| {
@@ -221,15 +340,12 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
                     return None;
                 }
                 let src = binder.row_by_id(r.src_id)?;
-                binder.resolve(r, src).map(|res| {
-                    let row = binder.row(res.row);
-                    (row.id, res.confidence)
-                })
+                binder.resolve(r, src).map(|res| (binder.row(res.row).id, res.confidence))
             })
             .collect()
     });
 
-    let tx = store.conn.transaction().map_err(|e| e.to_string())?;
+    let tx = store.conn.unchecked_transaction().map_err(|e| e.to_string())?;
     Store::clear_edges(&tx)?;
     let mut updates: Vec<(i64, i64, String)> = Vec::new();
     let mut edges: Vec<(i64, i64, String, i32, String)> = Vec::new();
@@ -249,7 +365,7 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
                 }
                 if target != r.src_id {
                     let k = (r.src_id, target, r.kind.clone());
-                    if seen.insert(k.clone()) {
+                    if seen.insert(k) {
                         edges.push((r.src_id, target, r.kind.clone(), r.line, conf.into()));
                     }
                 }
@@ -259,17 +375,24 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     Store::update_targets(&tx, &updates)?;
     Store::insert_edges(&tx, &edges)?;
     tx.commit().map_err(|e| e.to_string())?;
-    refs.clear();
+
+    if cfg.features.guid_map {
+        let _ = store.materialize_guid_edges();
+    }
 
     store.set_meta("indexed_at", &crate::store::now_unix().to_string())?;
     store.set_meta("profile", &cfg.raw.profile)?;
     let (fcount, scount, rcount, ecount) = store.counts();
+    let assets_count: i64 = store
+        .conn
+        .query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))
+        .unwrap_or(0);
     let elapsed = started.elapsed().as_millis();
 
     if !opts.quiet {
         eprintln!(
-            "[codegraph233] {} files, {} changed, {} removed, {} symbols, {} refs, {} edges, {} unresolved, {}ms",
-            fcount, changed.len(), removed, scount, rcount, ecount, unresolved, elapsed
+            "[codegraph233] {fcount} files, {} changed, {removed} removed, {scount} symbols, {rcount} refs, {ecount} edges, {assets_count} assets, {unresolved} unresolved, {elapsed}ms",
+            changed.len()
         );
     }
 
@@ -280,6 +403,7 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
         symbols: scount,
         refs: rcount,
         edges: ecount,
+        assets: assets_count,
         unresolved,
         elapsed_ms: elapsed,
     })
@@ -292,6 +416,8 @@ pub struct Status {
     pub symbols: i64,
     pub refs: i64,
     pub edges: i64,
+    pub assets: i64,
+    pub guid_entries: i64,
     pub indexed_at: i64,
 }
 
@@ -305,6 +431,8 @@ pub fn status(cfg: &Config) -> Status {
         symbols: 0,
         refs: 0,
         edges: 0,
+        assets: 0,
+        guid_entries: 0,
         indexed_at: 0,
     };
     if !exists {
@@ -316,6 +444,11 @@ pub fn status(cfg: &Config) -> Status {
         st.symbols = s;
         st.refs = r;
         st.edges = e;
+        st.assets = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))
+            .unwrap_or(0);
+        st.guid_entries = store.guid_count();
         st.indexed_at = store.get_meta("indexed_at").parse().unwrap_or(0);
     }
     st

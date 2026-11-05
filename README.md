@@ -4,20 +4,23 @@
 
 索引客户端 C#（后续阶段补齐 Go / Rust / TypeScript）、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
 
-## 当前状态（阶段 1 完成）
+## 能力（Rust 实现）
 
 | 能力 | 状态 |
 | --- | --- |
 | C# 前端（namespace / 类型 / 成员 / 字段 / 属性 / enum / 方法 / 调用 / 构造 / 引用 / 继承 / 类型依赖） | ✅ |
-| SQLite 存储（与历史 Go 版同 schema，可复用已有索引） | ✅ |
-| 增量索引（mtime/size）、删除清理、引用绑定（并行） | ✅ |
+| Go 前端（package / struct / interface / func / method / 跨包 receiver） | ✅ |
+| Rust 前端（mod / struct / enum / trait / impl / fn / use 别名） | ✅ |
+| TypeScript 前端（class / interface / enum / function / import 别名 / extends / implements） | ✅ |
+| prefab / scene（GameObject 层级、m_Script、嵌套 prefab、guid 引用） | ✅ |
+| shader（Shader / property / include / multi_compile 关键字 / HLSL 函数） | ✅ |
+| 媒体资产（图片宽高、音频采样率/码率/时长、视频时长、字体字形数、Spine atlas/skel） | ✅ |
+| 配置表（xlsx / csv / tsv / json，表头与行数） | ✅ |
+| guid 映射（编辑器导出 TSV/CSV/JSON + 明文 `.meta` 补充 + 资产边物化） | ✅ |
+| 增量索引（mtime/size）、prune、并行绑定 | ✅ |
 | CLI：`init` / `index` / `status` / `serve` / `install-mcp` | ✅ |
-| MCP stdio + 14 个工具（符号/引用/调用图/影响面/正则检索/资产/guid/健康） | ✅ |
-| Go / Rust / TypeScript 前端 | ⏳ 阶段 2 |
-| prefab / scene / shader / 资产（图片/音频/视频/字体/Spine）/ 配表 / guid 映射 | ⏳ 阶段 2 |
-| 多项目注册表（`project` 参数） | ⏳ 阶段 2 |
-
-> 未实现的能力在 MCP 里返回空数组或明确提示，不会静默给错数据。
+| MCP stdio + 14 个工具 | ✅ |
+| 多项目 `project` 参数 | ⏳ 下一步 |
 
 ## 安装（全局一次）
 
@@ -51,11 +54,13 @@ codegraph233 serve       # MCP stdio（客户端会自动拉起）
 
 ## 性能（Rust）
 
-本仓实测（11,418 个 C# 文件，`--profile code`）：
+本仓实测（49,599 文件，含 C#/Go/资产/配表/`.meta`）：
 
 | 指标 | 数值 |
 | --- | --- |
-| 全量索引 | **16 s**（Go 版同任务约 40–50 s，历史数据见 benchmarks） |
+| 全量索引（Rust） | **50 s**（Go 版 65 s / 48,101 文件） |
+| 仅 C#（11,418 文件） | **16 s**（Go 版同任务约 40–50 s） |
+| 产物 | 356k symbols / 2.17M refs / 990k edges / 40,116 assets / 27,716 guid |
 | 解析（33,755 文件） | 168 ms（Go 447 ms） |
 | 写库（100 万 refs + 80 万 edges） | 1.37 s（Go 9.54 s，**7×**） |
 | 无 GC | ✅（Rust 无 GC，Go 版 GC 本身也只占 0% CPU） |

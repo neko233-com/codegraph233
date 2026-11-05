@@ -29,6 +29,35 @@ pub struct Ref {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct Asset {
+    pub key: String,
+    pub root: String,
+    pub kind: String,
+    pub path: String,
+    pub name: String,
+    pub unity_id: String,
+    pub line: i32,
+    pub meta: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AssetEdge {
+    pub src: String,
+    pub dst: String,
+    pub kind: String,
+    pub detail: String,
+    pub root: String,
+    pub line: i32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GuidRow {
+    pub guid: String,
+    pub path: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct FileParse {
     pub rel_path: String,
     pub root: String,
@@ -37,6 +66,9 @@ pub struct FileParse {
     pub symbols: Vec<Symbol>,
     pub refs: Vec<Ref>,
     pub errors: Vec<String>,
+    pub assets: Vec<Asset>,
+    pub asset_edges: Vec<AssetEdge>,
+    pub guid_rows: Vec<GuidRow>,
 }
 
 #[derive(Debug, Clone, Default)]

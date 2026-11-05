@@ -14,6 +14,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
+calamine = "0.26"
+zip = "=2.2.2"
 
 [profile.release]
 opt-level = 3

@@ -210,9 +210,7 @@ pub fn parse(rel: &str, root: &str, src: &[u8], include_type_deps: bool) -> File
             root: root.to_string(),
             lang: "csharp".into(),
             module: String::new(),
-            symbols: Vec::new(),
-            refs: Vec::new(),
-            errors: Vec::new(),
+            ..Default::default()
         },
         type_uses: HashSet::new(),
         include_type_deps,

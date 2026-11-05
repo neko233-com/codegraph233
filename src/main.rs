@@ -1,12 +1,17 @@
+mod assets;
 mod binder;
 mod config;
 mod csharp;
+mod go_lang;
 mod indexer;
+mod lexer;
 mod mcp;
 mod model;
 mod query;
+mod rust_lang;
 mod setup;
 mod store;
+mod ts_lang;
 
 use std::path::PathBuf;
 
@@ -96,8 +101,8 @@ fn main() {
                 return;
             }
             println!(
-                "counts:   files={} symbols={} refs={} edges={}",
-                st.files, st.symbols, st.refs, st.edges
+                "counts:   files={} symbols={} refs={} edges={} assets={} guid={}",
+                st.files, st.symbols, st.refs, st.edges, st.assets, st.guid_entries
             );
             if st.indexed_at > 0 {
                 println!("indexed:  {}", st.indexed_at);

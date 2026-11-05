@@ -324,6 +324,113 @@ impl Store {
         Ok(())
     }
 
+    pub fn insert_assets(tx: &Transaction, assets: &[crate::model::Asset]) -> Result<(), String> {
+        if assets.is_empty() {
+            return Ok(());
+        }
+        // drop stale rows of the same path once per batch
+        let mut paths: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for a in assets {
+            if !a.path.is_empty() {
+                paths.insert(a.path.as_str());
+            }
+        }
+        for p in paths {
+            tx.execute(
+                "DELETE FROM asset_edges WHERE src IN (SELECT asset_key FROM assets WHERE path=?1)
+                 OR dst IN (SELECT asset_key FROM assets WHERE path=?1)",
+                params![p],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM assets WHERE path=?1", params![p])
+                .map_err(|e| e.to_string())?;
+        }
+        let mut stmt = tx
+            .prepare(
+                "INSERT INTO assets(asset_key, root, kind, path, name, unity_id, line, meta)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+                 ON CONFLICT(asset_key) DO UPDATE SET root=excluded.root,
+                   kind = CASE WHEN excluded.path <> '' THEN excluded.kind ELSE assets.kind END,
+                   path = CASE WHEN excluded.path <> '' THEN excluded.path ELSE assets.path END,
+                   name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE assets.name END,
+                   unity_id = COALESCE(NULLIF(excluded.unity_id,''), assets.unity_id),
+                   meta=excluded.meta",
+            )
+            .map_err(|e| e.to_string())?;
+        for a in assets {
+            let meta = serde_json::to_string(&a.meta).unwrap_or_else(|_| "{}".into());
+            stmt.execute(params![a.key, a.root, a.kind, a.path, a.name, a.unity_id, a.line, meta])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_asset_edges(tx: &Transaction, edges: &[crate::model::AssetEdge]) -> Result<(), String> {
+        if edges.is_empty() {
+            return Ok(());
+        }
+        let mut stmt = tx
+            .prepare("INSERT OR IGNORE INTO asset_edges(src, dst, kind, line, detail, root) VALUES(?1,?2,?3,?4,?5,?6)")
+            .map_err(|e| e.to_string())?;
+        for e in edges {
+            stmt.execute(params![e.src, e.dst, e.kind, e.line, e.detail, e.root])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn replace_guid_map(&self, rows: &[crate::model::GuidRow]) -> Result<(), String> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM guid_map", []).map_err(|e| e.to_string())?;
+        let mut stmt = tx
+            .prepare("INSERT OR IGNORE INTO guid_map(guid, path, name, type) VALUES(?1,?2,?3,?4)")
+            .map_err(|e| e.to_string())?;
+        for r in rows {
+            let name = std::path::Path::new(&r.path)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            stmt.execute(params![r.guid, r.path, name, r.kind]).map_err(|e| e.to_string())?;
+        }
+        drop(stmt);
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn materialize_guid_edges(&self) -> Result<usize, String> {
+        let n = self
+            .conn
+            .execute(
+                "INSERT OR IGNORE INTO asset_edges(src, dst, kind, line, detail, root)
+                 SELECT e.src,
+                        'asset:' || COALESCE((SELECT a.root FROM assets a WHERE a.asset_key=e.src), e.root, '') || ':' || g.path,
+                        e.kind, e.line, e.detail, e.root
+                 FROM asset_edges e JOIN guid_map g ON g.guid = SUBSTR(e.dst, 6)
+                 WHERE e.dst LIKE 'guid:%'",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(n)
+    }
+
+    pub fn guid_count(&self) -> i64 {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM guid_map", [], |r| r.get::<_, i64>(0))
+            .unwrap_or(0)
+    }
+
+    pub fn insert_assets_and_edges(
+        tx: &Transaction,
+        assets: &[crate::model::Asset],
+        edges: &[crate::model::AssetEdge],
+    ) -> Result<(), String> {
+        Store::insert_assets(tx, assets)?;
+        Store::insert_asset_edges(tx, edges)
+    }
+
     pub fn set_meta(&self, key: &str, value: &str) -> Result<(), String> {
         self.conn
             .execute(
