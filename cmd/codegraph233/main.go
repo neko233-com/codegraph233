@@ -185,6 +185,14 @@ func runStatus(args []string) {
 	fmt.Printf("indexed:  %s\n", st.IndexedAt)
 	fmt.Printf("counts:   files=%d symbols=%d refs=%d edges=%d assets=%d asset_edges=%d\n",
 		st.Files, st.Symbols, st.Refs, st.Edges, st.Assets, st.AssetEdges)
+	if st.GuidEntries > 0 || st.GuidRefs > 0 {
+		pct := 0.0
+		if st.GuidRefs > 0 {
+			pct = 100 * float64(st.GuidMapped) / float64(st.GuidRefs)
+		}
+		fmt.Printf("guid:     %d mappings, coverage %d/%d (%.1f%%)\n",
+			st.GuidEntries, st.GuidMapped, st.GuidRefs, pct)
+	}
 	if st.Detection.Strategy.Notes != "" {
 		fmt.Println("notes:    " + st.Detection.Strategy.Notes)
 	}

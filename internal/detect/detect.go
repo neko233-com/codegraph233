@@ -269,7 +269,7 @@ func aggregate(requested string, res Result) model.Strategy {
 func addStrategyNotes(st *model.Strategy) {
 	switch st.Name {
 	case "tuanjie":
-		st.Notes = "团结引擎：C# 源码可完整索引；.meta 的 guid 为加密形式，资产 guid 反查需 Unity/团结 编辑器桥，本工具保留 guid 关系但无法直接映射到资产路径。"
+		st.Notes = "团结引擎：C# 源码可完整索引；.meta 的 guid 多为加密形式，资产 guid 关联请用编辑器导出 tools/unity/Codegraph233GuidExporter.cs（否则仅明文 meta 可解析，覆盖率会显示在 status 中）。"
 	case "unity":
 		st.Notes = "Unity：C# 源码可完整索引；.meta guid 为明文，可按 guid 反查资产路径。"
 	case "ue":
