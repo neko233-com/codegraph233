@@ -26,7 +26,7 @@ function Fail($msg) {
 # --- 1. require Go ---------------------------------------------------------
 $go = Get-Command go -ErrorAction SilentlyContinue
 if (-not $go) {
-    Fail "未找到 Go。请先安装 Go 1.22+（推荐 1.27）：https://go.dev/dl/"
+    Fail "未找到 Go。请先安装 Go 1.24+（推荐 1.27）：https://go.dev/dl/"
 }
 $goVersion = (& go version) -replace '^go version go([0-9]+\.[0-9]+).*$', '$1'
 Write-Host "Go $goVersion detected" -ForegroundColor DarkGray

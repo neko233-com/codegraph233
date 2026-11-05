@@ -31,12 +31,26 @@ Linux / macOS / WSL:
 
 Both scripts:
 
-1. verify Go (1.22+, 1.27 recommended),
+1. verify Go (1.24+, 1.27 recommended),
 2. `go install` the binary into `$(go env GOPATH)/bin` (i.e. global),
 3. make sure that directory is on `PATH`,
 4. optionally register the MCP server in the current project.
 
-Options: `-Source <local checkout>`, `-Ref <tag|branch>`, `-NoMcp`, `-Clients codex,cursor,vscode,air,cowork`.
+Options: `-Source <local checkout>`, `-Ref <tag|branch>`, `-NoMcp`, `-Clients codex,cursor,vscode,air,cowork,workbuddy,project`.
+
+`install-mcp` writes the server entry into the project-level config of each client:
+
+| client | file |
+| --- | --- |
+| codex | `.codex/config.toml` (`[mcp_servers.game_project_graph]`) |
+| cursor | `.cursor/mcp.json` (`mcpServers`) |
+| vscode | `.vscode/mcp.json` (`servers`) |
+| air | `.air/mcp.json` (`mcpServers`) |
+| cowork | `.codely-cli/settings.json` (`mcpServers`) |
+| workbuddy | `.workbuddy/mcp.json` (`mcpServers`) |
+| project | `.mcp.json` (generic MCP entry point) |
+
+Each entry pins `--root <project>` so the server works no matter which root directory the client is opened from (e.g. the Go backend repo).
 
 Manual install:
 
@@ -124,6 +138,22 @@ Format is auto-detected, not hardcoded:
 * `.json` — array/object shape (rows, header keys).
 
 `gpg_config_readers` reports code that reads config (`GetDataById`, `ConfigManager`, `GetConfig`, …) and whether a hot-reload implementation exists (`ConfigHotReloadManager`, `ReloadConfig`, `Config233AutoExportWatcher`, …).
+
+## Performance (measured)
+
+Real project, client + backend in one index (`Assets/**` + Go service):
+
+| | |
+| --- | --- |
+| files | 23,386 (C# 13,261 · Go 5,847 · prefab/scene 1,196 · shader 403 · config 2,715) |
+| symbols | 368k |
+| edges | 1.20M |
+| assets | 24.8k (prefab objects, shader passes/properties, config tables) |
+| full `--force` index | ~100 s |
+| incremental (no file change) | ~36 s (reference rebind is global) |
+| DB size | ~1 GB for this project |
+
+Parsing is parallel (CPU-count workers); writes run in bounded batches so peak memory stays flat (about 3 GB during a full rebuild of 23k files, then down to a few hundred MB).
 
 ## Notes / limits
 

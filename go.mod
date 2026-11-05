@@ -1,6 +1,6 @@
 module github.com/neko233-com/game-project-graph
 
-go 1.27.0
+go 1.24.0
 
 require (
 	github.com/xuri/excelize/v2 v2.9.1

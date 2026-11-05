@@ -27,7 +27,7 @@ while [ $# -gt 0 ]; do
 done
 
 if ! command -v go >/dev/null 2>&1; then
-  echo "ERROR: Go not found. Install Go 1.22+ (1.27 recommended): https://go.dev/dl/" >&2
+  echo "ERROR: Go not found. Install Go 1.24+ (1.27 recommended): https://go.dev/dl/" >&2
   exit 1
 fi
 echo "Go detected: $(go version)"
