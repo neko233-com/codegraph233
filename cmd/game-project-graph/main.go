@@ -251,7 +251,7 @@ func ensureGitignore(dir string) {
 
 func runInstallMCP(args []string) {
 	fs := flag.NewFlagSet("install-mcp", flag.ExitOnError)
-	clients := fs.String("clients", "codex,cursor,vscode,air,cowork", "comma separated clients")
+	clients := fs.String("clients", "codex,cursor,vscode,air,cowork,workbuddy,project", "comma separated clients (codex,cursor,vscode,air,cowork,workbuddy,project)")
 	printOnly := fs.Bool("print", false, "print snippets instead of writing files")
 	exe := fs.String("exe", "game-project-graph", "command used in MCP configs")
 	_ = fs.Parse(args)

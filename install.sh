@@ -12,7 +12,7 @@ MODULE="github.com/neko233-com/game-project-graph"
 SOURCE=""
 REF="main"
 DO_MCP=1
-CLIENTS="codex,cursor,vscode,air,cowork"
+CLIENTS="codex,cursor,vscode,air,cowork,workbuddy,project"
 
 while [ $# -gt 0 ]; do
   case "$1" in

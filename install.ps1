@@ -1,4 +1,4 @@
-﻿# game-project-graph installer (Windows / PowerShell 7+)
+# game-project-graph installer (Windows / PowerShell 7+)
 #
 # Global install of the `game-project-graph` MCP server, then optional MCP
 # registration for Codex / Cursor / VS Code / JetBrains Air / Cowork.
@@ -12,7 +12,7 @@ param(
     [string]$Source = "",
     [string]$Ref = "main",
     [switch]$NoMcp,
-    [string]$Clients = "codex,cursor,vscode,air,cowork"
+    [string]$Clients = "codex,cursor,vscode,air,cowork,workbuddy,project"
 )
 
 $ErrorActionPreference = "Stop"
