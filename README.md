@@ -91,6 +91,24 @@ codegraph233 status                        # 显示 profile 与 7 项能力开�
 
 > MCP 内的 `cg233_index` 固定用持久档（服务端持有读连接，避免 journal 切档冲突）。
 
+## 推荐拓扑：全局装一次，项目只放配置和索引
+
+```
+全局（装一次）
+  ├─ 二进制        codegraph233            (go install -> PATH)
+  └─ MCP 条目      codegraph233 serve      (各客户端全局配置，不带 --root)
+
+项目级（每个仓库）
+  ├─ .codegraph233.json     配置（提交）
+  └─ .codegraph233/index.db 索引（gitignore，可重建）
+```
+
+* **不需要每个项目跑 `install-mcp`**。项目被打开时，server 按客户端 cwd 向上找 `.codegraph233.json` 自动定位；找不到再查注册表。
+* 定位优先级：`--root` > `CODEGRAPH233_ROOT` > cwd 向上发现 > 注册表（多项目时用 `project` 参数指定）。
+* 如果某个客户端不保证 cwd 是项目根，二选一：设环境变量 `CODEGRAPH233_ROOT=<项目>`，或对该项目用 `install-mcp --scope project` 写一条带 `--root` 的兜底条目。
+* 多项目常驻：`codegraph233 register` 过一次后，任意项目里都能 `project=<名字>` 查询；也可用 `CODEGRAPH233_PROJECTS=A;B` 代替注册表。
+* `install-mcp --scope global --clean-project` 会把旧的项目级 `codegraph233` 条目删掉（其它 server 不动）。
+
 ## 多项目：一个 MCP 服务多个仓库
 
 ```sh

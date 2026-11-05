@@ -7,14 +7,14 @@
 #   ./install.ps1                      # install from GitHub (main branch)
 #   ./install.ps1 -Source "D:\path\codegraph233"   # install a local checkout
 #   ./install.ps1 -NoMcp               # install binary only
-#   ./install.ps1 -Scope both          # register project-level AND user-level MCP configs
+#   ./install.ps1 -Scope project       # opt-in: pin one project in project-level configs
 #   ./install.ps1 -Ref v0.1.0          # pin a tag/branch/commit
 param(
     [string]$Source = "",
     [string]$Ref = "main",
     [switch]$NoMcp,
     [string]$Clients = "codex,cursor,vscode,air,cowork,workbuddy,project",
-    [string]$Scope = "project"
+    [string]$Scope = "global"
 )
 
 $ErrorActionPreference = "Stop"

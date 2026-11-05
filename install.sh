@@ -4,7 +4,7 @@
 # Usage:
 #   ./install.sh                       # install from GitHub (main branch)
 #   ./install.sh --source ~/src/codegraph233
-#   ./install.sh --scope both          # project-level AND user-level MCP configs
+#   ./install.sh --scope project       # opt-in: pin one project in project-level configs
 #   ./install.sh --no-mcp
 #   ./install.sh --ref v0.1.0
 set -eu
@@ -14,7 +14,7 @@ SOURCE=""
 REF="main"
 DO_MCP=1
 CLIENTS="codex,cursor,vscode,air,cowork,workbuddy,project"
-SCOPE="project"
+SCOPE="global"
 
 while [ $# -gt 0 ]; do
   case "$1" in

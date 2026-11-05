@@ -72,6 +72,16 @@ func Serve(cfg *config.Config, in io.Reader, out io.Writer) error {
 	if reg, err := projects.Load(); err == nil {
 		s.registered = reg.Projects
 	}
+	// Optional env supplement: CODEGRAPH233_PROJECTS=A;B;C
+	if env := os.Getenv("CODEGRAPH233_PROJECTS"); env != "" {
+		for _, r := range strings.Split(env, string(os.PathListSeparator)) {
+			r = strings.TrimSpace(r)
+			if r == "" {
+				continue
+			}
+			s.registered = append(s.registered, projects.Project{Root: r, Name: filepath.Base(filepath.Clean(r))})
+		}
+	}
 	// The launch project is always available even when not registered.
 	if eng, err := query.Open(cfg); err == nil {
 		s.eng = eng

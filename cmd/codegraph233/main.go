@@ -436,7 +436,8 @@ func runCompact(args []string) {
 func runInstallMCP(args []string) {
 	fs := flag.NewFlagSet("install-mcp", flag.ExitOnError)
 	clients := fs.String("clients", "codex,cursor,vscode,air,cowork,workbuddy,project", "comma separated clients (codex,cursor,vscode,air,cowork,workbuddy,project)")
-	scope := fs.String("scope", "project", "project|global|both")
+	scope := fs.String("scope", "global", "global (recommended)|project|both")
+	cleanProject := fs.Bool("clean-project", false, "remove project-level codegraph233 entries (other servers are kept)")
 	printOnly := fs.Bool("print", false, "print snippets instead of writing files")
 	exe := fs.String("exe", "codegraph233", "command used in MCP configs")
 	_ = fs.Parse(args)
@@ -467,6 +468,62 @@ func runInstallMCP(args []string) {
 		}
 		fmt.Printf("updated %s (%s, %s)\n", target.path, target.client, target.scopeName)
 	}
+	if *cleanProject {
+		for _, raw := range strings.Split(*clients, ",") {
+			client := strings.ToLower(strings.TrimSpace(raw))
+			if client == "" {
+				continue
+			}
+			p := projectConfigPath(client, cfg.Dir)
+			if p == "" {
+				continue
+			}
+			removed, err := removeClientConfig(client, p)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warn: clean %s: %v\n", client, err)
+				continue
+			}
+			if removed {
+				fmt.Printf("removed project entry %s (%s)\n", p, client)
+			}
+		}
+	}
+}
+
+// removeClientConfig deletes only the codegraph233 entry from a client config.
+func removeClientConfig(client, path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, nil
+	}
+	if client == "codex" {
+		text := stripTomlSection(string(data), "codegraph233")
+		if text == string(data) {
+			return false, nil
+		}
+		return true, os.WriteFile(path, []byte(text), 0o644)
+	}
+	existing := map[string]any{}
+	if err := json.Unmarshal(data, &existing); err != nil {
+		return false, err
+	}
+	key := "mcpServers"
+	if client == "vscode" {
+		key = "servers"
+	}
+	section, _ := existing[key].(map[string]any)
+	if section == nil {
+		return false, nil
+	}
+	if _, ok := section["codegraph233"]; !ok {
+		return false, nil
+	}
+	delete(section, "codegraph233")
+	out, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(path, append(out, '\n'), 0o644)
 }
 
 func serverEntry(exe string, args []string) map[string]any {
