@@ -9,6 +9,9 @@ index.db
 index.db-wal
 index.db-shm
 
+# agent runtime
+/.codely-cli/
+
 # editor / OS
 .DS_Store
 .idea/

@@ -48,10 +48,12 @@ fn normalize(root: &str) -> String {
     } else {
         std::env::current_dir().unwrap_or_default().join(p)
     };
-    std::fs::canonicalize(&abs)
+    let s = std::fs::canonicalize(&abs)
         .unwrap_or(abs)
         .to_string_lossy()
-        .replace('\\', "/")
+        .replace('\\', "/");
+    // strip Windows verbatim prefix (\\?\)
+    s.trim_start_matches("//?/").to_string()
 }
 
 pub fn add(reg: &mut Registry, root: &str) -> bool {
