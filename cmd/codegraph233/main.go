@@ -170,7 +170,7 @@ func runStatus(args []string) {
 	fmt.Printf("config:   %s\n", cfg.FilePath)
 	fmt.Printf("data:     %s\n", st.DataDir)
 	fmt.Printf("strategy: %s  engine: %s\n", st.Detection.Strategy.Name, st.Detection.Strategy.Engine)
-	fmt.Printf("languages: %v (policy: csharp=default, go=optional, lua=planned)\n", st.Languages)
+	fmt.Printf("languages: %v (policy: csharp=default; go/rust/typescript=optional; lua=planned)\n", st.Languages)
 	for _, r := range st.Detection.Roots {
 		state := "ok"
 		if !r.Exists {
