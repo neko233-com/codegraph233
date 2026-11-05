@@ -205,8 +205,34 @@ fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(text) => assets::parse_meta(&f.rel, &f.root, &text),
             Err(_) => FileParse::default(),
         },
-        _ => assets::parse_media(&f.rel, &f.root, &f.abs),
+        _ => {
+            if assets::is_structured_asset(&f.rel) {
+                assets::parse_structured_asset(&f.rel, &f.root, &f.abs)
+            } else {
+                assets::parse_media(&f.rel, &f.root, &f.abs)
+            }
+        }
     }
+}
+
+/// Parse one file with the project's feature set; used by `codegraph233 parse`
+/// to debug what the indexer extracts.
+pub fn parse_file_debug(abs: &Path, rel: &str, cfg: &Config) -> FileParse {
+    let lang = lang_of(rel, cfg, &[]).unwrap_or("asset").to_string();
+    let f = ScanFile {
+        root: cfg
+            .raw
+            .roots
+            .first()
+            .map(|r| r.key.clone())
+            .unwrap_or_else(|| "client".into()),
+        abs: abs.to_path_buf(),
+        rel: rel.to_string(),
+        lang,
+        size: std::fs::metadata(abs).map(|m| m.len() as i64).unwrap_or(0),
+        mtime: 0,
+    };
+    parse_file(&f, cfg)
 }
 
 fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
@@ -228,24 +254,32 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
     out
 }
 
+/// Bump when parsers change in a way that must invalidate existing rows.
+const PARSER_VERSION: &str = "0.3.1";
+
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
     let db_path = cfg.db_path();
 
-    // An index written by an older schema cannot answer the current queries.
-    // Indexes are disposable, so rebuild instead of migrating in place.
+    // An index written by an older schema (or by older parsers) cannot answer
+    // the current queries. Indexes are disposable, so rebuild instead of
+    // migrating in place.
     if db_path.is_file() {
-        let stale = match Store::open(&db_path, opts.fast) {
-            Ok(probe) => probe.is_stale().unwrap_or(false),
-            Err(_) => false,
+        let (stale, rows) = match Store::open(&db_path, opts.fast) {
+            Ok(probe) => (
+                probe.is_stale().unwrap_or(false)
+                    || probe.get_meta("parser_version") != PARSER_VERSION,
+                probe.counts().0,
+            ),
+            Err(_) => (false, 0),
         };
-        if stale {
+        if stale && rows > 0 {
             for suffix in ["", "-wal", "-shm", "-journal"] {
                 let p = PathBuf::from(format!("{}{suffix}", db_path.display()));
                 let _ = std::fs::remove_file(p);
             }
             if !opts.quiet {
-                eprintln!("[codegraph233] index schema changed; rebuilding from scratch");
+                eprintln!("[codegraph233] index schema/parser changed; rebuilding from scratch");
             }
         }
     }
@@ -287,6 +321,11 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     // Nothing changed: skip parsing *and* rebinding. This is the common case
     // for a watcher-driven index call and used to cost a full global rebind.
     if changed.is_empty() && stale.is_empty() && !opts.force && !prev_indexed.is_empty() {
+        // The guid map may have been refreshed above; re-materialize so resolved
+        // references reflect it even when no source file changed.
+        if cfg.features.guid_map {
+            let _ = store.materialize_guid_edges();
+        }
         let (fcount, scount, rcount, ecount) = store.counts();
         let assets_count = store
             .conn
@@ -472,11 +511,19 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     tx.commit().map_err(|e| e.to_string())?;
 
     if cfg.features.guid_map {
-        let _ = store.materialize_guid_edges();
+        match store.materialize_guid_edges() {
+            Ok(n) => {
+                if !opts.quiet {
+                    eprintln!("[codegraph233] materialized {n} guid edges");
+                }
+            }
+            Err(e) => eprintln!("[codegraph233] guid materialization failed: {e}"),
+        }
     }
 
     store.set_meta("indexed_at", &crate::store::now_unix().to_string())?;
     store.set_meta("profile", &cfg.raw.profile)?;
+    store.set_meta("parser_version", PARSER_VERSION)?;
     store.set_meta("rebind_mode", if incremental { "incremental" } else { "global" })?;
     let unresolved_total: i64 = if incremental {
         let prev: i64 = store.get_meta("unresolved_refs").parse().unwrap_or(-1);
@@ -533,7 +580,8 @@ pub struct Status {
     pub indexed_at: i64,
 }
 
-pub fn status(cfg: &Config) -> Status {    let db = cfg.db_path();
+pub fn status(cfg: &Config) -> Status {
+    let db = cfg.db_path();
     let exists = db.is_file();
     let mut st = Status {
         exists,
@@ -678,6 +726,67 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM symbols WHERE qualname LIKE '%B.Bar%'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(left, 0);
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod asset_edge_tests {
+    use super::*;
+    use crate::config;
+    use std::fs;
+
+    fn write(path: &Path, text: &str) {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn guid_materialization_links_material_to_shader_once() {
+        let dir = std::env::temp_dir().join(format!("cg233-guid-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"client","path":".","role":"frontend"}],"languages":["csharp"]}"#,
+        );
+        write(
+            &dir.join("Assets/M.mat"),
+            "%YAML 1.1\n--- !u!21 &2100000\nMaterial:\n  m_Name: M\n  m_Shader: {fileID: 4800000, guid: 11111111111111111111111111111111, type: 3}\n",
+        );
+        write(
+            &dir.join("Assets/S.shader"),
+            "Shader \"Game/S\" { Properties { _MainTex (\"T\", 2D) = \"white\" {} } SubShader { Pass { } } }\n",
+        );
+        // Plaintext .meta rows share the target's path; re-parsing them must not
+        // drop references to the asset they describe.
+        write(
+            &dir.join("Assets/S.shader.meta"),
+            "fileFormatVersion: 2\nguid: 11111111111111111111111111111111\nShaderImporter:\n  defaultTextures: []\n",
+        );
+        write(
+            &dir.join(".codegraph233/guid-map.tsv"),
+            "guid\tpath\ttype\n11111111111111111111111111111111\tAssets/S.shader\tShader\n",
+        );
+        let cfg = config::load(&dir).unwrap();
+        let opts = Options { force: false, jobs: 2, quiet: true, fast: true };
+        run(&cfg, &opts).unwrap();
+        run(&cfg, &opts).unwrap();
+        let store = Store::open(&cfg.db_path(), false).unwrap();
+        let rows: Vec<(String, String)> = store
+            .conn
+            .prepare(
+                "SELECT dst, kind FROM asset_edges WHERE kind='uses_shader' ORDER BY dst",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(rows.len(), 1, "expected exactly one materialized shader edge: {rows:?}");
+        assert!(rows[0].0.ends_with("Assets/S.shader"), "{rows:?}");
         drop(store);
         let _ = fs::remove_dir_all(&dir);
     }

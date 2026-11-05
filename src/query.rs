@@ -449,7 +449,21 @@ impl Engine {
         for row in rows {
             let (guid, path, ty, name) = row.map_err(|e| e.to_string())?;
             let key = format!("guid:{guid}");
-            let referenced_by = self.asset_edges(&key, "in", limit)?;
+            let mut referenced_by = self.asset_edges(&key, "in", limit)?;
+            // Resolved guids were rewritten to the asset path by materialization.
+            if let Ok(resolved) = self.store.conn.query_row(
+                "SELECT asset_key FROM assets WHERE path=?1 ORDER BY LENGTH(asset_key) LIMIT 1",
+                params![path],
+                |r| r.get::<_, String>(0),
+            ) {
+                if resolved != key {
+                    for e in self.asset_edges(&resolved, "in", limit)? {
+                        if !referenced_by.contains(&e) {
+                            referenced_by.push(e);
+                        }
+                    }
+                }
+            }
             out.push(json!({
                 "guid": guid, "path": path, "type": ty, "name": name,
                 "referenced_by": referenced_by,
@@ -477,11 +491,16 @@ impl Engine {
         let assets = q("SELECT COUNT(*) FROM assets");
         let asset_edges = q("SELECT COUNT(*) FROM asset_edges");
         let guid_entries = q("SELECT COUNT(*) FROM guid_map");
-        let guid_refs = q("SELECT COUNT(*) FROM (SELECT DISTINCT dst FROM asset_edges WHERE dst LIKE 'guid:%')");
-        let guid_mapped = q(
-            "SELECT COUNT(*) FROM (SELECT DISTINCT dst FROM asset_edges e
-             WHERE dst LIKE 'guid:%' AND EXISTS (SELECT 1 FROM guid_map g WHERE g.guid=SUBSTR(e.dst,6)))",
-        );
+        let meta_i = |key: &str| -> Option<i64> { self.store.get_meta(key).parse().ok() };
+        let guid_refs = meta_i("guid_refs").unwrap_or_else(|| {
+            q("SELECT COUNT(*) FROM (SELECT DISTINCT dst FROM asset_edges WHERE dst LIKE 'guid:%')")
+        });
+        let guid_mapped = meta_i("guid_refs_mapped").unwrap_or_else(|| {
+            q(
+                "SELECT COUNT(*) FROM (SELECT DISTINCT dst FROM asset_edges e
+                 WHERE dst LIKE 'guid:%' AND EXISTS (SELECT 1 FROM guid_map g WHERE g.guid=SUBSTR(e.dst,6)))",
+            )
+        });
         let db_bytes = std::fs::metadata(self.cfg.db_path()).map(|m| m.len()).unwrap_or(0);
         Ok(json!({
             "files": files, "symbols": symbols, "refs": refs, "edges": edges,

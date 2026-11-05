@@ -35,8 +35,7 @@ pub fn asset_kind(rel: &str) -> &'static str {
     }
 }
 
-pub fn is_asset_ext(rel: &str) -> bool {
-    let ext = Path::new(rel)
+pub fn is_asset_ext(rel: &str) -> bool {    let ext = Path::new(rel)
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
@@ -47,6 +46,18 @@ pub fn is_asset_ext(rel: &str) -> bool {
             | "aif" | "aiff" | "wma" | "mp4" | "mov" | "webm" | "mkv" | "avi" | "m4v" | "ttf"
             | "otf" | "ttc" | "atlas" | "skel" | "mat" | "anim" | "controller" | "mixer"
             | "playable" | "asmdef" | "spriteatlas" | "meta"
+    )
+}
+
+/// Extensions parsed as reference-bearing YAML/JSON instead of opaque media.
+pub fn is_structured_asset(rel: &str) -> bool {
+    let ext = Path::new(rel)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(
+        ext.as_str(),
+        "mat" | "anim" | "controller" | "playable" | "mixer" | "asset" | "spriteatlas" | "asmdef"
     )
 }
 
@@ -441,6 +452,53 @@ pub fn parse_media(rel: &str, root: &str, abs: &Path) -> FileParse {
                     }
                 }
             }
+            if let Some(name) = ttf_name(abs) {
+                meta.insert("font_name".into(), name);
+            }
+        }
+        "atlas" => {
+            if let Ok(text) = fs::read_to_string(abs) {
+                let mut pages = 0usize;
+                let mut regions = 0usize;
+                for line in text.lines() {
+                    let t = line.trim();
+                    if t.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
+                        continue;
+                    }
+                    if t.ends_with(".png") || t.ends_with(".jpg") || t.ends_with(".webp") {
+                        pages += 1;
+                    } else if !t.contains(':') {
+                        regions += 1;
+                    }
+                    if let Some(v) = t.strip_prefix("size:") {
+                        meta.insert("page_size".into(), v.trim().to_string());
+                    }
+                }
+                meta.insert("pages".into(), pages.to_string());
+                meta.insert("regions".into(), regions.to_string());
+            }
+        }
+        "skel" => {
+            if let Ok(text) = fs::read_to_string(abs) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(s) = v.get("skeleton").and_then(|x| x.get("spine")) {
+                        meta.insert("spine_version".into(), s.to_string().trim_matches('"').to_string());
+                    }
+                    for (key, label) in [("bones", "bones"), ("slots", "slots"), ("skins", "skins")] {
+                        if let Some(a) = v.get(key).and_then(|x| x.as_array()) {
+                            meta.insert(label.into(), a.len().to_string());
+                        }
+                    }
+                    if let Some(o) = v.get("animations").and_then(|x| x.as_object()) {
+                        meta.insert("animations".into(), o.len().to_string());
+                    }
+                }
+            } else if !head.is_empty() {
+                let probe = String::from_utf8_lossy(&head[..head.len().min(128)]);
+                if let Some(v) = Regex::new(r"\d+\.\d+\.\d+").ok().and_then(|r| r.find(&probe)) {
+                    meta.insert("spine_version".into(), v.as_str().to_string());
+                }
+            }
         }
         _ => {}
     }
@@ -450,6 +508,255 @@ pub fn parse_media(rel: &str, root: &str, abs: &Path) -> FileParse {
 
 fn find(h: &[u8], pat: &[u8]) -> Option<usize> {
     h.windows(pat.len()).position(|w| w == pat)
+}
+
+/// Unity YAML assets that are mostly reference tables: materials, animation
+/// clips, animator controllers, timelines, mixers, sprite atlases,
+/// ScriptableObjects (including TMP font assets) and asmdef JSON.
+pub fn parse_structured_asset(rel: &str, root: &str, abs: &Path) -> FileParse {
+    let ext = Path::new(rel)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext == "asmdef" {
+        return parse_asmdef(rel, root, abs);
+    }
+    let text = match fs::read_to_string(abs) {
+        Ok(t) => t,
+        Err(_) => return parse_media(rel, root, abs),
+    };
+    if !text.contains("--- !u!") && !text.starts_with("%YAML") {
+        return parse_media(rel, root, abs);
+    }
+
+    let mut res = FileParse {
+        rel_path: rel.to_string(),
+        root: root.to_string(),
+        lang: "asset".into(),
+        ..Default::default()
+    };
+    let mut kind = asset_kind(rel);
+    let mut meta = HashMap::new();
+    meta.insert("bytes".to_string(), text.len().to_string());
+
+    // TMP font asset: serialized character/glyph tables and atlas size.
+    if text.contains("m_AtlasPopulationMode") || text.contains("TMP_FontAsset") {
+        kind = "tmp_font";
+        if let Some(pm) = capture_one(r"(?m)^\s*m_AtlasPopulationMode:\s*(-?\d+)", &text) {
+            meta.insert("atlas_population_mode".into(), pm);
+        }
+        if let Some(w) = capture_one(r"(?m)^\s*m_AtlasWidth:\s*(\d+)", &text) {
+            meta.insert("atlas_width".into(), w);
+        }
+        if let Some(h) = capture_one(r"(?m)^\s*m_AtlasHeight:\s*(\d+)", &text) {
+            meta.insert("atlas_height".into(), h);
+        }
+        meta.insert("characters".into(), count_matches(&text, r"(?m)^\s*-?\s*m_Unicode:"));
+        meta.insert("glyphs".into(), count_matches(&text, r"(?m)^\s*-?\s*m_Index:\s*\d+"));
+        meta.insert(
+            "source_font_guid".into(),
+            capture_one(
+                r"(?m)^\s*m_SourceFontFile_EditorRef:\s*\{[^}]*guid:\s*([0-9a-fA-F]{32})",
+                &text,
+            )
+            .unwrap_or_default(),
+        );
+    } else if kind == "material" {
+        meta.insert(
+            "shader_guid".into(),
+            capture_one(r"(?m)^\s*m_Shader:\s*\{[^}]*guid:\s*([0-9a-fA-F]{32})", &text)
+                .unwrap_or_default(),
+        );
+        meta.insert(
+            "texture_slots".into(),
+            count_matches(&text, r"(?m)^\s{4,6}[A-Za-z_][A-Za-z0-9_.]*:\s*$"),
+        );
+    } else if kind == "animation_clip" {
+        if let Some(v) = capture_one(r"(?m)^\s*m_SampleRate:\s*([0-9.]+)", &text) {
+            meta.insert("sample_rate".into(), v);
+        }
+        if let Some(v) = capture_one(r"(?m)^\s*m_StopTime:\s*([0-9.]+)", &text) {
+            meta.insert("duration_sec".into(), v);
+        }
+        meta.insert("events".into(), count_matches(&text, r"(?m)^\s*m_FunctionName:"));
+    } else if kind == "sprite_atlas" {
+        meta.insert(
+            "packed_sprites".into(),
+            count_matches(&text, r"(?m)^\s*m_PackedSprites:"),
+        );
+    }
+
+    res.assets
+        .push(asset_node(rel, root, kind, &base_name(rel), meta));
+    let file_key = format!("asset:{root}:{rel}");
+
+    // Every one-line Unity reference (`field: {fileID: N, guid: G, type: T}`).
+    let re = Regex::new(
+        r#"(?m)^\s*([A-Za-z_][A-Za-z0-9_.]*):\s*\{[^}\n]*guid:\s*([0-9a-fA-F]{32})"#,
+    )
+    .unwrap();
+    let mut seen: HashSet<String> = HashSet::new();
+    for c in re.captures_iter(&text) {
+        let field = c[1].to_string();
+        let guid = c[2].to_ascii_lowercase();
+        let (kind, detail) = match field.as_str() {
+            "m_Script" => ("uses_script", "m_Script"),
+            "m_Shader" => ("uses_shader", "m_Shader"),
+            "m_SourceFontFile_EditorRef" | "m_SourceFontFile" => ("uses_font", "m_SourceFontFile"),
+            _ => ("references", ""),
+        };
+        let dedup = format!("{guid}|{kind}|{field}");
+        if !seen.insert(dedup) {
+            continue;
+        }
+        let dst = format!("guid:{guid}");
+        res.assets.push(Asset {
+            key: dst.clone(),
+            root: root.to_string(),
+            kind: "guid_ref".into(),
+            path: String::new(),
+            name: guid.clone(),
+            unity_id: guid,
+            line: 0,
+            meta: HashMap::new(),
+        });
+        res.asset_edges.push(AssetEdge {
+            src: file_key.clone(),
+            dst,
+            kind: kind.into(),
+            detail: if detail.is_empty() { field } else { detail.into() },
+            root: root.to_string(),
+            line: 0,
+        });
+    }
+    res
+}
+
+fn parse_asmdef(rel: &str, root: &str, abs: &Path) -> FileParse {
+    let mut res = FileParse {
+        rel_path: rel.to_string(),
+        root: root.to_string(),
+        lang: "asset".into(),
+        ..Default::default()
+    };
+    let mut meta = HashMap::new();
+    let text = fs::read_to_string(abs).unwrap_or_default();
+    meta.insert("bytes".into(), text.len().to_string());
+    let mut refs: Vec<String> = Vec::new();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+        if let Some(name) = v.get("name").and_then(|x| x.as_str()) {
+            meta.insert("assembly".into(), name.to_string());
+        }
+        if let Some(auto) = v.get("autoReferenced").and_then(|x| x.as_bool()) {
+            meta.insert("auto_referenced".into(), auto.to_string());
+        }
+        for key in ["references", "precompiledReferences"] {
+            if let Some(arr) = v.get(key).and_then(|x| x.as_array()) {
+                for r in arr {
+                    if let Some(s) = r.as_str() {
+                        refs.push(s.to_string());
+                    }
+                }
+            }
+        }
+        if let Some(arr) = v.get("includePlatforms").and_then(|x| x.as_array()) {
+            let mut p: Vec<String> = Vec::new();
+            for r in arr {
+                if let Some(s) = r.as_str() {
+                    p.push(s.to_string());
+                }
+            }
+            meta.insert("platforms".into(), p.join(","));
+        }
+    }
+    meta.insert("references".into(), refs.join(";"));
+    res.assets
+        .push(asset_node(rel, root, "assembly_def", &base_name(rel), meta));
+    res
+}
+
+fn capture_one(re: &str, text: &str) -> Option<String> {
+    Regex::new(re)
+        .ok()
+        .and_then(|r| r.captures(text))
+        .map(|c| c[1].trim().to_string())
+}
+
+fn count_matches(text: &str, re: &str) -> String {
+    Regex::new(re)
+        .map(|r| r.find_iter(text).count())
+        .unwrap_or(0)
+        .to_string()
+}
+
+/// Read the family name (name table, nameID 4) of a TTF/OTF file without
+/// loading the whole font.
+fn ttf_name(abs: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = fs::File::open(abs).ok()?;
+    let mut head = [0u8; 12];
+    f.read_exact(&mut head).ok()?;
+    let num = u16::from_be_bytes([head[4], head[5]]) as usize;
+    if num == 0 || num > 512 {
+        return None;
+    }
+    let mut dir = vec![0u8; num * 16];
+    f.read_exact(&mut dir).ok()?;
+    for i in 0..num {
+        let rec = &dir[i * 16..i * 16 + 16];
+        if &rec[0..4] != b"name" {
+            continue;
+        }
+        let off = be32(rec, 8) as u64;
+        let len = be32(rec, 12) as usize;
+        if len == 0 || len > 512 * 1024 {
+            return None;
+        }
+        f.seek(SeekFrom::Start(off)).ok()?;
+        let mut buf = vec![0u8; len];
+        f.read_exact(&mut buf).ok()?;
+        return parse_name_table(&buf);
+    }
+    None
+}
+
+fn parse_name_table(b: &[u8]) -> Option<String> {
+    if b.len() < 6 {
+        return None;
+    }
+    let count = u16::from_be_bytes([b[2], b[3]]) as usize;
+    let string_off = u16::from_be_bytes([b[4], b[5]]) as usize;
+    for i in 0..count {
+        let rec = 6 + i * 12;
+        if rec + 12 > b.len() {
+            break;
+        }
+        let platform = u16::from_be_bytes([b[rec], b[rec + 1]]);
+        let name_id = u16::from_be_bytes([b[rec + 6], b[rec + 7]]);
+        if name_id != 4 {
+            continue;
+        }
+        let len = u16::from_be_bytes([b[rec + 8], b[rec + 9]]) as usize;
+        let off = string_off + u16::from_be_bytes([b[rec + 10], b[rec + 11]]) as usize;
+        if off + len > b.len() {
+            continue;
+        }
+        let raw = &b[off..off + len];
+        let name = if platform == 3 || platform == 0 {
+            let units: Vec<u16> = raw
+                .chunks_exact(2)
+                .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                .collect();
+            String::from_utf16_lossy(&units)
+        } else {
+            String::from_utf8_lossy(raw).to_string()
+        };
+        let name = name.trim().to_string();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+    None
 }
 
 fn jpeg_size(b: &[u8]) -> Option<(u32, u32)> {
@@ -768,5 +1075,114 @@ Transform:
         assert_eq!(table.meta["rows"], "3");
         assert_eq!(table.meta["columns"], "5");
         assert_eq!(table.meta["format"], "csv");
+    }
+}
+
+#[cfg(test)]
+mod structured_tests {
+    use super::*;
+    use std::fs;
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("cg233-asset-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir.join(name)
+    }
+
+    #[test]
+    fn material_links_shader_and_textures() {
+        let p = tmp("Hero.mat");
+        fs::write(
+            &p,
+            r#"%YAML 1.1
+--- !u!21 &2100000
+Material:
+  m_Name: Hero
+  m_Shader: {fileID: 4800000, guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, type: 3}
+  m_SavedProperties:
+    m_TexEnvs:
+    - _MainTex:
+        m_Texture: {fileID: 2800000, guid: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, type: 3}
+"#,
+        )
+        .unwrap();
+        let res = parse_structured_asset("Assets/Hero.mat", "client", &p);
+        let mat = res.assets.iter().find(|a| a.kind == "material").unwrap();
+        assert_eq!(mat.meta["shader_guid"], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert!(res
+            .asset_edges
+            .iter()
+            .any(|e| e.kind == "uses_shader" && e.dst.ends_with("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")));
+        assert!(res
+            .asset_edges
+            .iter()
+            .any(|e| e.kind == "references" && e.dst.ends_with("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")));
+        let _ = fs::remove_file(p);
+    }
+
+    #[test]
+    fn tmp_font_reports_atlas_and_tables() {
+        let p = tmp("Font.asset");
+        fs::write(
+            &p,
+            r#"%YAML 1.1
+--- !u!114 &11400000
+MonoBehaviour:
+  m_Name: MainFont
+  m_AtlasPopulationMode: 1
+  m_AtlasWidth: 1024
+  m_AtlasHeight: 512
+  m_SourceFontFile_EditorRef: {fileID: 12800000, guid: cccccccccccccccccccccccccccccccc, type: 3}
+  m_CharacterTable:
+  - m_Unicode: 32
+  - m_Unicode: 65
+  m_GlyphTable:
+  - m_Index: 0
+  - m_Index: 1
+  - m_Index: 2
+"#,
+        )
+        .unwrap();
+        let res = parse_structured_asset("Assets/Font.asset", "client", &p);
+        let f = res.assets.iter().find(|a| a.kind == "tmp_font").unwrap();
+        assert_eq!(f.meta["atlas_width"], "1024");
+        assert_eq!(f.meta["characters"], "2");
+        assert_eq!(f.meta["glyphs"], "3");
+        assert_eq!(f.meta["source_font_guid"], "cccccccccccccccccccccccccccccccc");
+        assert!(res.asset_edges.iter().any(|e| e.kind == "uses_font"));
+        let _ = fs::remove_file(p);
+    }
+
+    #[test]
+    fn asmdef_reports_assembly_and_references() {
+        let p = tmp("Game.asmdef");
+        fs::write(
+            &p,
+            r#"{"name":"Game.Runtime","references":["UnityEngine.UI","Game.Shared"],"includePlatforms":["Editor"],"autoReferenced":false}"#,
+        )
+        .unwrap();
+        let res = parse_structured_asset("Assets/Game.asmdef", "client", &p);
+        let a = res.assets.iter().find(|a| a.kind == "assembly_def").unwrap();
+        assert_eq!(a.meta["assembly"], "Game.Runtime");
+        assert_eq!(a.meta["references"], "UnityEngine.UI;Game.Shared");
+        assert_eq!(a.meta["platforms"], "Editor");
+        assert_eq!(a.meta["auto_referenced"], "false");
+        let _ = fs::remove_file(p);
+    }
+
+    #[test]
+    fn spine_atlas_counts_pages_and_regions() {
+        let p = tmp("hero.atlas");
+        fs::write(
+            &p,
+            "hero.png\nsize: 1024,1024\nformat: RGBA8888\nfilter: Linear,Linear\nrepeat: none\nidle\n  rotate: false\nwalk\n  rotate: false\n",
+        )
+        .unwrap();
+        let res = parse_media("Assets/hero.atlas", "client", &p);
+        let a = res.assets.iter().find(|x| x.kind == "spine_atlas").unwrap();
+        assert_eq!(a.meta["pages"], "1");
+        assert_eq!(a.meta["regions"], "2");
+        assert_eq!(a.meta["page_size"], "1024,1024");
+        let _ = fs::remove_file(p);
     }
 }

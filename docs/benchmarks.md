@@ -42,4 +42,19 @@
 ## 5. Rust 迁移
 
 * 目标：完全用 Rust 重写（索引 + 存储 + MCP），不再保留 Go。
-* 现状：C# 前端、SQLite 存储（同 schema）、增量索引、绑定、`index`/`status`、MCP stdio 已迁移；Go / Rust / TypeScript 前端、prefab/shader/资产/配表/guid 为后续阶段。
+* 现状（0.3.1）：C# / Go / Rust / TypeScript / Lua 前端、SQLite 存储、增量重绑定、prefab / shader / 结构化资产 / 配表 / guid、23 个 MCP 工具全部迁移完成。
+
+## 6. Rust 全量索引（0.3.1，团结工程）
+
+| 指标 | 数值 |
+| --- | --- |
+| 文件 | 49,599（C# 11,418 / Go 5,299 / 资产+meta 等） |
+| symbols / refs / edges | 356,326 / 2,170,450 / 990,679 |
+| assets / asset_edges | 40,648 / 100,807 |
+| 全量 `index`（冷库，fast 档） | **19–22 s** |
+| 无改动 `index` | **< 10 ms** |
+| 单文件改动（增量重绑定） | **3.7 s** |
+| DB（v2 schema，无 prune） | **394 MB** |
+| DB（`compact` 后） | **371–374 MB**（0.2.0 同库 918 MB） |
+
+增量重绑定与 `--force` 全量重建逐边一致，由 `cargo test` 中的 `indexer::incremental_rebind_matches_full_rebuild` 固定。

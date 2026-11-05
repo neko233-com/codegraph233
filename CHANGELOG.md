@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.1 — 2026-11-05
+
+**补齐 SPEC §3.3 里承诺、但 Rust 版仍是“只有体积”的资产解析。**
+
+### 新增
+
+- 结构化 Unity YAML 资产（`.mat` / `.anim` / `.controller` / `.playable` / `.mixer` /
+  `.asset` / `.spriteatlas`）：解析所有单行 `{fileID, guid}` 引用，产出
+  `uses_script` / `uses_shader` / `uses_font` / `references` 边，字段名写入 `detail`。
+- 材质：`shader_guid`、贴图槽数量；材质 → 贴图/材质 → shader 可直接反查。
+- 动画片段：`sample_rate` / `duration_sec` / `events`。
+- SpriteAtlas：`packed_sprites`。
+- TMP 字体（`TMP_FontAsset`）：图集宽高、字符数、字形数、源字体 guid、AtlasPopulationMode。
+- asmdef：程序集名、`references`、`autoReferenced`、`includePlatforms`。
+- Spine：`.atlas` 页数 / 区域数 / 页尺寸；`.skel`（JSON 或二进制）版本，JSON 额外给出
+  bones / slots / skins / animations 数量。
+- TTF/OTF：新增字体名（name 表 nameID 4，按偏移读取，不整文件加载）。
+
+### 变更
+
+- 新增 `parser_version` 元数据：解析器行为变化时 `index` 自动重建，避免旧索引与新生代码不一致。
+- schema v3：`asset_edges(src,dst,kind)` 唯一索引（打开旧库时一次性去重），解决每次 guid 物化重复插入边的问题；
+  guid 解析成功后删除对应的原始 `guid:` 边，`cg233_asset_info` / `cg233_asset_refs` 不再出现一进一出两份同一关系。
+- `cg233_project_health` 的 guid 覆盖率改读索引期写入的统计，不再依赖已被替换的原始边。
+
 ## 0.3.0 — 2026-11-05
 
 **MCP 工具补齐、Lua 前端、增量重绑定、索引体积减半。**

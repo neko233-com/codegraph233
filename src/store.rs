@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Bump when the physical schema changes; a mismatch makes `index` rebuild the DB.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -73,6 +73,26 @@ impl Store {
             .map_err(|e| e.to_string())?;
         }
         conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
+        // The asset-edge dedup index cannot be part of SCHEMA: older indexes may
+        // already contain duplicate rows, so clean those once before creating it.
+        let has_uniq: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_asset_edges_uniq'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if has_uniq == 0 {
+            let _ = conn.execute(
+                "DELETE FROM asset_edges WHERE rowid NOT IN
+                 (SELECT MIN(rowid) FROM asset_edges GROUP BY src, dst, kind)",
+                [],
+            );
+            let _ = conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_edges_uniq ON asset_edges(src, dst, kind)",
+                [],
+            );
+        }
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap_or(0);
@@ -507,14 +527,21 @@ impl Store {
             }
         }
         for p in paths {
+            // `guid_ref` rows share the target's path, so they must not take
+            // part in path-scoped deletion: re-parsing an asset's `.meta`
+            // would otherwise wipe every reference to that asset.
             tx.execute(
-                "DELETE FROM asset_edges WHERE src IN (SELECT asset_key FROM assets WHERE path=?1)
-                 OR dst IN (SELECT asset_key FROM assets WHERE path=?1)",
+                "DELETE FROM asset_edges
+                 WHERE src IN (SELECT asset_key FROM assets WHERE path=?1 AND kind<>'guid_ref')
+                    OR dst IN (SELECT asset_key FROM assets WHERE path=?1 AND kind<>'guid_ref')",
                 params![p],
             )
             .map_err(|e| e.to_string())?;
-            tx.execute("DELETE FROM assets WHERE path=?1", params![p])
-                .map_err(|e| e.to_string())?;
+            tx.execute(
+                "DELETE FROM assets WHERE path=?1 AND kind<>'guid_ref'",
+                params![p],
+            )
+            .map_err(|e| e.to_string())?;
         }
         let mut stmt = tx
             .prepare(
@@ -572,6 +599,16 @@ impl Store {
     }
 
     pub fn materialize_guid_edges(&self) -> Result<usize, String> {
+        let distinct_guids = |s: &Store| -> i64 {
+            s.conn
+                .query_row(
+                    "SELECT COUNT(DISTINCT dst) FROM asset_edges WHERE dst LIKE 'guid:%'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0)
+        };
+        let before = distinct_guids(self);
         let n = self
             .conn
             .execute(
@@ -584,6 +621,18 @@ impl Store {
                 [],
             )
             .map_err(|e| e.to_string())?;
+        // Once a guid resolves, the raw `guid:` edge is redundant; dropping it
+        // keeps asset_info/refs output readable and the DB smaller.
+        self.conn
+            .execute(
+                "DELETE FROM asset_edges
+                 WHERE dst LIKE 'guid:%' AND SUBSTR(dst, 6) IN (SELECT guid FROM guid_map)",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        let remaining = distinct_guids(self);
+        self.set_meta("guid_refs", &before.to_string())?;
+        self.set_meta("guid_refs_mapped", &(before - remaining).to_string())?;
         Ok(n)
     }
 

@@ -15,8 +15,9 @@
 | Lua 前端（模块函数 / `a.b` 与 `a:b` 方法 / local 函数与表 / require / 调用） | ✅ |
 | prefab / scene（GameObject 层级、m_Script、嵌套 prefab、guid 引用） | ✅ |
 | shader（Shader / property / include / multi_compile 关键字 / HLSL 函数） | ✅ |
-| 媒体资产（图片宽高、音频采样率/码率/时长、视频时长、字体字形数、Spine atlas/skel） | ✅ |
+| 媒体资产（图片宽高、音频采样率/码率/时长、视频时长、字体名与字形数、Spine atlas/skel） | ✅ |
 | 配置表（xlsx / csv / tsv / json，表头与行数、读取点探测） | ✅ |
+| 结构化资产（材质/动画/控制器/时间轴/混音器/SpriteAtlas/TMP 字体/asmdef）的 guid 引用 | ✅ |
 | guid 映射（编辑器导出 TSV/CSV/JSON + 明文 `.meta` 补充 + 资产边物化） | ✅ |
 | 增量索引（mtime/size）、prune、并行绑定 | ✅ |
 | 增量重绑定（小 delta 只重算相关边，结果与全量重建一致） | ✅ |

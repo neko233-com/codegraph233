@@ -58,13 +58,13 @@
 | 图片（png/jpg/tga/psd/exr/webp/bmp/gif/hdr/dds） | 已实现 | 宽度/高度/体积（头部解析，不读整文件） |
 | 音频（wav/mp3/ogg/flac/m4a/aac/aif/mod…） | 已实现 | 采样率、声道、时长、码率（头部；OGG 读尾部 granule） |
 | 视频（mp4/mov/webm/mkv/avi） | 已实现 | 时长、分辨率（mvhd/tkhd；moov 在尾部时读 tail） |
-| TTF/OTF/TTC 字体 | 已实现 | 字体名、字形数（name/maxp 表，按偏移 ReadAt） |
+| TTF/OTF/TTC 字体 | 已实现 | 字体名（name 表 nameID 4）、字形数（maxp 表），按偏移 ReadAt，不读整文件 |
 | TMP 字体（`TMP_FontAsset`） | 已实现 | 图集宽高、字符数、字形数、源字体 guid、AtlasPopulationMode |
-| Spine（.skel/.atlas/spine json） | 已实现 | atlas 页数、骨骼数、动画数、spine 版本 |
-| 材质/动画/控制器/时间轴/混音器 | 已实现 | shader guid、贴图引用、clip/state/track 引用 |
+| Spine（.skel/.atlas） | 已实现 | atlas 页数/区域数/页尺寸；.skel（JSON）版本与 bones/slots/skins/animations 数量，二进制版本号 |
+| 材质/动画/控制器/时间轴/混音器 | 已实现 | 解析全部 `{fileID, guid}` 引用为 `uses_script` / `uses_shader` / `uses_font` / `references` 边（detail=字段名）；材质附 `shader_guid`、贴图槽数；动画附采样率/时长/事件数；SpriteAtlas 附 packed_sprites |
 | 资产→资产直接边 | 已实现 | 索引结束把 guid 端点物化为 `asset:<root>:<path>`，可直接回答"这个材质用了哪些贴图/这个 prefab 实例化了哪些 prefab" |
 | 孤儿资产 / 健康报告 | 已实现 | `cg233_asset_orphans`（未被引用的资源，体积排序）、`cg233_project_health`（覆盖率/孤儿/DB 体积/最大资产） |
-| asmdef | 已实现 | 程序集名、引用、平台 |
+| asmdef | 已实现 | 程序集名、references、autoReferenced、includePlatforms |
 | 配表 | 已实现 | xlsx（每个 sheet 一张表，**自动挑字段名行**）、csv/tsv、json；表头/行数/列数/说明行；读取点与热重载探测 |
 | guid → 路径 | 已实现 | 编辑器导出 TSV（100% 资产，本仓 27,412 条）为主；明文 `.meta`（32 位）自动补充；本仓引用覆盖率 96.7% |
 

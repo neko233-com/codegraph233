@@ -150,6 +150,45 @@ fn main() {
                 }
             }
         }
+        "parse" => {
+            let target = match rest.first() {
+                Some(p) => PathBuf::from(p),
+                None => {
+                    eprintln!("usage: codegraph233 parse <file> [--root PATH]");
+                    std::process::exit(2);
+                }
+            };
+            let cfg = match config::load(&root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let base = cfg.dir.clone();
+            let rel = target
+                .strip_prefix(&base)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| target.to_string_lossy().replace('\\', "/"));
+            let parsed = indexer::parse_file_debug(&target, &rel, &cfg);
+            let out = serde_json::to_string_pretty(&serde_json::json!({
+                    "path": rel,
+                    "symbols": parsed.symbols.iter().map(|s| serde_json::json!({
+                        "kind": s.kind, "qualname": s.qualname, "container": s.container,
+                        "start": s.start_line, "end": s.end_line,
+                    })).collect::<Vec<_>>(),
+                    "assets": parsed.assets.iter().map(|a| serde_json::json!({
+                        "key": a.key, "kind": a.kind, "name": a.name, "meta": a.meta,
+                    })).collect::<Vec<_>>(),
+                    "asset_edges": parsed.asset_edges.iter().map(|e| serde_json::json!({
+                        "src": e.src, "dst": e.dst, "kind": e.kind, "detail": e.detail,
+                    })).collect::<Vec<_>>(),
+                    "refs": parsed.refs.len(),
+                    "errors": parsed.errors,
+                }))
+                .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
+            println!("{out}");
+        }
         "compact" => {
             let cfg = match config::load(&root) {
                 Ok(c) => c,
@@ -267,7 +306,7 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        "version" | "--version" | "-v" => println!("codegraph233 0.3.0 (rust)"),
+        "version" | "--version" | "-v" => println!("codegraph233 0.3.1 (rust)"),
         _ => usage(),
     }
 }

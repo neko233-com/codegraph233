@@ -315,7 +315,7 @@ pub fn serve(cfg: Config) -> Result<(), String> {
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {"listChanged": false}},
-                    "serverInfo": {"name": "codegraph233", "version": "0.3.0"},
+                    "serverInfo": {"name": "codegraph233", "version": "0.3.1"},
                     "instructions": "AST GraphRAG (Rust). cg233_status first, cg233_index to build/update. Code: cg233_overview / cg233_find_symbol / cg233_symbol_path / cg233_call_graph / cg233_impact. Assets: cg233_asset_search / cg233_asset_tree / cg233_asset_refs / cg233_asset_orphans. Data: cg233_config_tables / cg233_config_readers. Physics: cg233_shader_info. guid: cg233_guid_lookup."
                 }
             }),
