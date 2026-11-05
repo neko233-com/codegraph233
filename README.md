@@ -14,6 +14,32 @@
 | 游戏数据图 | prefab/scene 的 GameObject 层级、`m_Script`、嵌套 prefab、资源 guid；ShaderLab 的 property/pass/include/keyword；配表的表头/行数/读取点/热重载 |
 | 工程识别 | 自动判断团结（`t` 补丁号）/ Unity / UE（仅识别），多根目录（前端 + 后端，后端可空缺） |
 
+## 资产谱系
+
+| 家族 | 扩展名 | 元信息 |
+| --- | --- | --- |
+| image | png / jpg / tga / psd / exr / tif / bmp / gif / webp / hdr / dds | 宽高（PNG/JPEG/GIF/BMP/PSD/WEBP/TGA 头部解析） |
+| audio | wav / mp3 / ogg / flac / m4a / aac / aif / wma / xm / it / mod | 采样率、声道、时长（WAV/MP3/OGG/FLAC/MP4 容器） |
+| video | mp4 / mov / webm / mkv / avi / m4v | 时长、分辨率（mvhd/tkhd，支持 moov 在文件尾） |
+| font | ttf / otf / ttc | 字体名、字形数（name/maxp 表） |
+| tmp_font | `.asset` 中的 TMP_FontAsset | 图集宽高、字符数、字形数、源字体 guid |
+| spine | `.skel` / `.atlas` / spine json | atlas 页数、骨骼数、动画数、spine 版本 |
+| material | `.mat` | shader guid、贴图/属性引用 |
+| animation | `.anim` / `.controller` / `.playable` / `.mixer` | 名称与内部引用（clip / state / track） |
+| assembly | `.asmdef` | 程序集名、引用、平台 |
+| shader | `.shader` / `.hlsl` / `.cginc` / `.compute` | property / pass / include / keyword / HLSL 函数 |
+| config | xlsx / csv / tsv / json | 表头、行数、读取点、热重载 |
+
+* **二进制资产只读头部**：图片/音频/视频约 8KB，字体按表偏移读 name/maxp，MP4 支持 moov 在文件尾（读尾部 256KB），从不加载整文件。
+* **Unity（明文 `.meta`）**：额外索引 `**/*.meta` 建立 `guid → 资产路径`，prefab/材质里的 32 位 guid 直接解析成资产路径。
+* **团结（加密 `.meta`）**：无法反解 guid，保留 guid 引用关系并在 `status` 的 notes 里标注；`cg233_asset_search` 仍可按名称/类型/路径查资产。
+* 新增 MCP 工具：`cg233_asset_stats`（按家族统计数量/体积 + 最大文件）、`cg233_asset_info`（元信息 + 双向引用）。
+
+## 缓存与排除
+
+默认排除生成/缓存目录：`Library`、`Temp`、`Logs`、`obj`、`Build(s)`、`UserSettings`、`MemoryCaptures`、`Recordings`、`Bundles`、`StreamingAssets`、`LocalPackageCache` 等，以及 `.codely.packages`、`.codely`、`backup`、`_backup`、`备份`、`Documentation~`、`Samples~`、`Tests~`。
+项目可在 `exclude` 追加（本仓追加了美术仓库 `Team-Art-Resources-for-project-sf` 与工具目录 `_Tools` / `_tools`）。
+
 ## 语言与引擎策略
 
 | 语言 | 级别 | 状态 |
@@ -124,12 +150,13 @@ codegraph233 install-mcp   # 写各客户端 MCP 配置
 
 | | |
 | --- | --- |
-| 文件 | 23,386（C# 13,261 · Go 5,847 · prefab/scene 1,196 · shader 403 · config 2,715） |
-| 符号 / 边 | 368k / 1.20M |
-| 资产 | 24.8k（prefab 对象、shader pass/property、配表） |
-| 全量 `--force` | ~100s |
-| 无改动增量 | ~36s（引用重绑定仍是全局） |
-| DB | ~1.0GB |
+| 文件 | 27,736（含代码 / prefab / shader / 配表 / 图片·音频·视频·字体·spine·材质等资产） |
+| 符号 / 边 | 271k / 702k |
+| 资产 | 33,891（image 6,895 · material 672 · spine 200+199 · audio 321 · font 3 · tmp_font 2 · timeline 120 · asmdef 159 …） |
+| 全量 `--force` | ~89s |
+| 无改动增量 | ~30s（引用重绑定仍是全局） |
+| DB | ~1.0GB（WAL 在退出时 TRUNCATE 收敛） |
+| 排除后减少 | 8,580 个美术备份/工具文件（36,316 → 27,736） |
 
 解析按 CPU 并行，写库分批，峰值内存约 3GB（23k 文件全量重建）。
 

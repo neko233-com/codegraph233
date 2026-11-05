@@ -722,6 +722,104 @@ func (e *Engine) PrefabTree(pathFilter, root string, limit int) ([]AssetHit, []A
 	return objs, edges, err
 }
 
+// AssetStat is one asset family aggregate.
+type AssetStat struct {
+	Kind    string      `json:"kind"`
+	Count   int         `json:"count"`
+	Bytes   int64       `json:"bytes"`
+	Largest []AssetSize `json:"largest,omitempty"`
+}
+
+// AssetSize is one large asset row.
+type AssetSize struct {
+	Key   string `json:"key"`
+	Kind  string `json:"kind"`
+	Path  string `json:"path"`
+	Name  string `json:"name"`
+	Bytes int64  `json:"bytes"`
+}
+
+// AssetStats aggregates asset counts/bytes by kind plus the largest files.
+func (e *Engine) AssetStats(root string, topPerKind int) ([]AssetStat, error) {
+	if topPerKind <= 0 {
+		topPerKind = 3
+	}
+	where := " WHERE kind NOT IN ('guid_ref','prefab_object','scene_object')"
+	args := []any{}
+	if root != "" {
+		where += " AND root = ?"
+		args = append(args, root)
+	}
+	q := `SELECT kind, COUNT(*), SUM(CAST(COALESCE(json_extract(meta,'$.bytes'),'0') AS INTEGER))
+		FROM assets` + where + ` GROUP BY kind ORDER BY 3 DESC, 2 DESC`
+	rows, err := e.St.DB().Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	var out []AssetStat
+	for rows.Next() {
+		var st AssetStat
+		if err := rows.Scan(&st.Kind, &st.Count, &st.Bytes); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	rows.Close()
+	for i := range out {
+		q2 := `SELECT asset_key, kind, COALESCE(path,''), COALESCE(name,''),
+			CAST(json_extract(meta,'$.bytes') AS INTEGER) b
+			FROM assets WHERE kind = ? AND json_extract(meta,'$.bytes') IS NOT NULL`
+		args2 := []any{out[i].Kind}
+		if root != "" {
+			q2 += " AND root = ?"
+			args2 = append(args2, root)
+		}
+		q2 += " ORDER BY b DESC LIMIT ?"
+		args2 = append(args2, topPerKind)
+		r2, err := e.St.DB().Query(q2, args2...)
+		if err != nil {
+			continue
+		}
+		for r2.Next() {
+			var a AssetSize
+			if r2.Scan(&a.Key, &a.Kind, &a.Path, &a.Name, &a.Bytes) == nil {
+				out[i].Largest = append(out[i].Largest, a)
+			}
+		}
+		r2.Close()
+	}
+	return out, nil
+}
+
+// AssetInfo returns one asset (by exact key or path substring) with its edges.
+func (e *Engine) AssetInfo(key, pathFilter string, limit int) (*AssetHit, []AssetEdgeHit, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	var h AssetHit
+	var meta string
+	var err error
+	if key != "" {
+		err = e.St.DB().QueryRow(`SELECT asset_key, kind, COALESCE(root,''), COALESCE(path,''),
+			COALESCE(name,''), COALESCE(unity_id,''), COALESCE(line,0), COALESCE(meta,'{}')
+			FROM assets WHERE asset_key = ?`, key).
+			Scan(&h.Key, &h.Kind, &h.Root, &h.Path, &h.Name, &h.UnityID, &h.Line, &meta)
+	} else {
+		err = e.St.DB().QueryRow(`SELECT asset_key, kind, COALESCE(root,''), COALESCE(path,''),
+			COALESCE(name,''), COALESCE(unity_id,''), COALESCE(line,0), COALESCE(meta,'{}')
+			FROM assets WHERE path LIKE ? ORDER BY LENGTH(path) LIMIT 1`, "%"+pathFilter+"%").
+			Scan(&h.Key, &h.Kind, &h.Root, &h.Path, &h.Name, &h.UnityID, &h.Line, &meta)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("asset not found: %w", err)
+	}
+	_ = json.Unmarshal([]byte(meta), &h.Meta)
+	in, _ := e.AssetEdges(h.Key, "in", limit)
+	out, _ := e.AssetEdges(h.Key, "out", limit)
+	return &h, append(in, out...), nil
+}
+
 // ConfigTable summarizes one config table.
 type ConfigTable struct {
 	Name    string            `json:"name"`

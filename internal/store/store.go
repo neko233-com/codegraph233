@@ -52,8 +52,14 @@ func (s *Store) DB() *sql.DB { return s.db }
 // Path is the database file path.
 func (s *Store) Path() string { return s.path }
 
-// Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+// Close checkpoints the WAL (so the index directory stays compact) and closes
+// the database.
+func (s *Store) Close() error {
+	if _, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		_ = err
+	}
+	return s.db.Close()
+}
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (

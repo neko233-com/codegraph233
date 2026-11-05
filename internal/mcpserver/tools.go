@@ -157,6 +157,23 @@ func toolDefs() []toolDef {
 			}, "key"),
 		},
 		{
+			Name: "cg233_asset_stats",
+			Description: "Asset inventory by family (image/audio/video/font/tmp_font/spine_data/material/animation/controller/timeline/config_table...): count, total bytes and the largest files. Use it to find heavy assets and audit what the project contains.",
+			InputSchema: obj(map[string]any{
+				"root":          str("Optional root key"),
+				"top_per_kind":  num("Largest files per kind (default 3)"),
+			}),
+		},
+		{
+			Name: "cg233_asset_info",
+			Description: "One asset by exact key or path substring: metadata (dimensions/duration/channels/font glyphs/TMP atlas/Spine animations/bytes) plus incoming and outgoing references.",
+			InputSchema: obj(map[string]any{
+				"key":  str("Exact asset key from cg233_asset_search"),
+				"path": str("Path substring when key is omitted"),
+				"limit": num("Edge limit (default 200)"),
+			}),
+		},
+		{
 			Name: "cg233_shader_info",
 			Description: "ShaderLab summary: shader name, properties, passes, includes and multi_compile keywords.",
 			InputSchema: obj(map[string]any{
@@ -343,6 +360,32 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 			return "", err
 		}
 		return toJSON(hits)
+
+	case "cg233_asset_stats":
+		eng, err := s.requireEngine()
+		if err != nil {
+			return "", err
+		}
+		stats, err := eng.AssetStats(argStr(args, "root", ""), argInt(args, "top_per_kind", 3))
+		if err != nil {
+			return "", err
+		}
+		return toJSON(stats)
+
+	case "cg233_asset_info":
+		eng, err := s.requireEngine()
+		if err != nil {
+			return "", err
+		}
+		key, pth := argStr(args, "key", ""), argStr(args, "path", "")
+		if key == "" && pth == "" {
+			return "", fmt.Errorf("asset_info needs key or path")
+		}
+		h, edges, err := eng.AssetInfo(key, pth, argInt(args, "limit", 200))
+		if err != nil {
+			return "", err
+		}
+		return toJSON(map[string]any{"asset": h, "edges": edges})
 
 	case "cg233_shader_info":
 		eng, err := s.requireEngine()

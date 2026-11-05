@@ -53,6 +53,9 @@ var DefaultExclude = []string{
 	"node_modules", ".codely-cli", ".codex", ".cursor", ".codegraph233",
 	"Bundles", "StreamingAssets", "__pycache__", ".vs", ".idea", "DerivedDataCache",
 	"Binaries", "Intermediate", "Saved", ".gradle",
+	"UserSettings", "MemoryCaptures", "Recordings", ".utmp", "crashlytics-build",
+	".codely.packages", ".codely", "backup", "_backup", "备份",
+	"Documentation~", "Samples~", "Tests~",
 	// local copies / tool caches that duplicate real sources
 	".local", ".cache", ".venv", "venv", ".tmp",
 }

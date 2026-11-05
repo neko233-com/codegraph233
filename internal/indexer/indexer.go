@@ -44,6 +44,7 @@ type rootScan struct {
 	Key       string
 	Dir       string
 	GoModule  string
+	Strategy  string
 	ConfigDir bool
 }
 
@@ -74,6 +75,7 @@ func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 		for _, info := range det.Roots {
 			if info.Key == r.Key {
 				rs.GoModule = info.GoModule
+				rs.Strategy = info.Strategy
 			}
 		}
 		roots = append(roots, rs)
@@ -209,12 +211,18 @@ func scanRoots(cfg *config.Config, roots []rootScan, st *store.Store, opts Optio
 				if lang == "" {
 					return nil
 				}
+				if lang == "asset" && strings.HasSuffix(rel, ".meta") && rs.Strategy != "unity" {
+					// Tuanjie meta guids are encrypted; mapping is impossible without the editor bridge.
+					return nil
+				}
 				limit := int64(2 << 20)
 				switch lang {
 				case "prefab":
 					limit = maxPrefabBytes
 				case "config":
 					limit = 32 << 20
+				case "asset":
+					limit = 64 << 20
 				default:
 					limit = maxCodeBytes
 				}
@@ -291,6 +299,9 @@ func langOf(rel, abs string, configDirs []string, rootKey string, prefabs, shade
 			return "config"
 		}
 	}
+	if assets.AssetExt(rel) {
+		return "asset"
+	}
 	return ""
 }
 
@@ -330,7 +341,7 @@ func parseAll(files []scanFile, opts Options) []*model.FileResult {
 		go func() {
 			defer wg.Done()
 			for j := range ch {
-				results[j.idx] = parseOne(j.file, opts)
+				results[j.idx] = safeParse(j.file, opts)
 				mu.Lock()
 				done++
 				if opts.Progress != nil && !opts.Quiet {
@@ -346,6 +357,19 @@ func parseAll(files []scanFile, opts Options) []*model.FileResult {
 	close(ch)
 	wg.Wait()
 	return results
+}
+
+// safeParse isolates a single malformed file so one panic cannot kill the run.
+func safeParse(f scanFile, opts Options) (res *model.FileResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			res = &model.FileResult{
+				RelPath: f.Rel, Root: f.Root, Lang: f.Lang,
+				Errors: []string{fmt.Sprintf("panic: %v", r)},
+			}
+		}
+	}()
+	return parseOne(f, opts)
 }
 
 func parseOne(f scanFile, opts Options) *model.FileResult {
@@ -386,6 +410,8 @@ func parseOne(f scanFile, opts Options) *model.FileResult {
 		return res
 	case "config":
 		return assets.ParseConfigFile(f.Abs, f.Rel, f.Root)
+	case "asset":
+		return assets.ParseAsset(f.Abs, f.Rel, f.Root, 4<<20)
 	}
 	return &model.FileResult{RelPath: f.Rel, Root: f.Root, Lang: f.Lang}
 }

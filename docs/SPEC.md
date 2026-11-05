@@ -55,7 +55,16 @@
 | --- | --- | --- |
 | prefab / scene | 已实现 | GameObject 节点、父子 `contains`、`m_Script` → `uses_script`、嵌套 prefab → `instantiates`、资源 guid → `references` |
 | shader | 已实现 | shader / pass / property 节点、`includes`、`multi_compile` 关键字、HLSL 函数符号 |
+| 图片（png/jpg/tga/psd/exr/webp/bmp/gif/hdr/dds） | 已实现 | 宽度/高度/体积（头部解析，不读整文件） |
+| 音频（wav/mp3/ogg/flac/m4a/aac/aif/mod…） | 已实现 | 采样率、声道、时长、码率（头部；OGG 读尾部 granule） |
+| 视频（mp4/mov/webm/mkv/avi） | 已实现 | 时长、分辨率（mvhd/tkhd；moov 在尾部时读 tail） |
+| TTF/OTF/TTC 字体 | 已实现 | 字体名、字形数（name/maxp 表，按偏移 ReadAt） |
+| TMP 字体（`TMP_FontAsset`） | 已实现 | 图集宽高、字符数、字形数、源字体 guid、AtlasPopulationMode |
+| Spine（.skel/.atlas/spine json） | 已实现 | atlas 页数、骨骼数、动画数、spine 版本 |
+| 材质/动画/控制器/时间轴/混音器 | 已实现 | shader guid、贴图引用、clip/state/track 引用 |
+| asmdef | 已实现 | 程序集名、引用、平台 |
 | 配表 | 已实现 | xlsx（每个 sheet 一张表，**自动挑字段名行**）、csv/tsv、json；表头/行数/列数/说明行；读取点与热重载探测 |
+| guid → 路径 | 部分 | Unity 明文 `.meta` 全量映射；团结加密 `.meta` 无法反解（保留 guid 关系） |
 
 ## 4. MCP 契约
 
@@ -86,7 +95,7 @@
 
 ## 6. 非目标（明确不做）
 
-1. 不做编译级类型检查或语法诊断（不替代 IDE / Roslyn）。
+1. 不做编译级类型检查或语法诊断（不替代 IDE / Roslyn）；资产元信息是头部/文本解析，不替代 AssetDatabase 的导入设置。
 2. 不做代码改写、重命名、批量重构（不做 Serena 的编辑类工具）。
 3. 不做 UE 的 C++ / 蓝图 / 资产图（策略位保留）。
 4. 不尝试解密团结引擎的 `.meta` guid（需编辑器桥；当前保留 guid 关系，不做 guid→路径）。
