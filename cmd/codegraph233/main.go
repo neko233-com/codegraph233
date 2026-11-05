@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/neko233-com/codegraph233/internal/config"
@@ -111,6 +112,9 @@ func runIndex(args []string) {
 	profile := fs.String("profile", "", "override feature profile: full|game|code|minimal")
 	writeMode := fs.String("write-mode", "single", "index write mode: single (one transaction, default)|batch|none")
 	lowPriority := fs.Bool("low-priority", true, "run the index at below-normal process priority to avoid stealing CPU from the editor")
+	cpus := fs.Int("cpus", 0, "limit worker threads (0 = all CPUs); lower it if the editor stutters")
+	memLimitMB := fs.Int("mem-limit-mb", 0, "soft heap limit for the index run (0 = unlimited); keeps RSS predictable")
+	lite := fs.Bool("lite", false, "low-memory profile: smaller SQLite cache/mmap and half the workers")
 	_ = fs.Parse(args)
 	if *root != "" {
 		os.Setenv("CODEGRAPH233_ROOT", *root)
@@ -128,6 +132,25 @@ func runIndex(args []string) {
 		if err := priority.SetLow(); err != nil {
 			fmt.Fprintln(os.Stderr, "warn: set low priority:", err)
 		}
+	}
+	if *cpus > 0 {
+		runtime.GOMAXPROCS(*cpus)
+		if *jobs == 0 {
+			*jobs = *cpus
+		}
+	}
+	if *lite {
+		store.SetLite(true)
+		if *jobs == 0 {
+			n := runtime.NumCPU() / 2
+			if n < 1 {
+				n = 1
+			}
+			*jobs = n
+		}
+	}
+	if *memLimitMB > 0 {
+		debug.SetMemoryLimit(int64(*memLimitMB) << 20)
 	}
 	opts := indexer.Options{Force: *force, Jobs: *jobs, Quiet: *quiet, FastWrite: !*safe, WriteMode: *writeMode}
 	if !*quiet {

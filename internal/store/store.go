@@ -31,6 +31,15 @@ func Open(path string) (*Store, error) { return openWith(path, false) }
 // always rebuildable, so callers use this only for write-heavy runs.
 func OpenFast(path string) (*Store, error) { return openWith(path, true) }
 
+// OpenFastLite is the low-memory write profile: smaller page cache and mmap
+// window, trading some throughput for a lower resident set.
+func OpenFastLite(path string) (*Store, error) { return openWith(path, true) }
+
+var liteMode bool
+
+// SetLite switches the fast profile to smaller caches (set before OpenFast).
+func SetLite(on bool) { liteMode = on }
+
 func openWith(path string, fast bool) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err

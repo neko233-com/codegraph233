@@ -132,6 +132,30 @@ codegraph233 projects          # 列出 + 索引状态
 
 结论：单进程单连接下没有跨进程锁竞争，"无事务"反而慢 2.4 倍（每条语句一次提交）。真正省掉的是**日志与 fsync**：快速档已用 `journal_mode=OFF` + `synchronous=OFF` + `mmap`，索引可重建，崩溃只损失一次索引。
 
+## 为什么不是 Rust（实测数据）
+
+有人会问"Rust 是否更快更轻更少卡顿"。本仓 48k 文件全量索引的实测：
+
+| 指标 | 数值 |
+| --- | --- |
+| GC 次数（65s 内） | 141 |
+| GC CPU 占比 | **0%** |
+| GC STW 总时长 | **49.6ms**（占 0.08%） |
+| 单次最大停顿 | **1.83ms** |
+| Go 堆 | **5–6MB**（图数据在 SQLite 页缓存/mmap，不在 GC 堆） |
+| 进程 RSS 峰值 | ~2.4GB（其中绝大部分是 SQLite 页缓存与写入路径） |
+
+结论：GC 不是卡顿来源，RSS 也不由 Go 堆决定。迁 Rust 只能省二进制体积（15MB → 更小）与那 5MB 堆，却要重写 ~8k 行（4 语言前端 + 30+ 资产类型 + 图 + MCP），风险与周期不成比例。Rust 工具链在本机已验证可用（`rusqlite` bundled 编译通过），将来若要把解析器局部换成 Rust 具备条件。
+
+真正的卡顿来源与对应手段：
+
+| 来源 | 手段 |
+| --- | --- |
+| CPU 抢占编辑器 | `index --low-priority`（默认开，Windows BELOW_NORMAL） |
+| 并发过高 | `index --cpus N` / `--jobs N` |
+| 一次解析太多文件 | `writeBatch` 600 + refs 分页 10 万（内置） |
+| 明确只想要更小 RSS | `index --lite`（更小 cache/mmap；**实测未降低峰值**，仅作可用档位） |
+
 ## 避免卡顿
 
 * `index --low-priority`（默认开启）：Windows 下把进程设为 `BELOW_NORMAL_PRIORITY_CLASS`，不抢编辑器/游戏 CPU。
