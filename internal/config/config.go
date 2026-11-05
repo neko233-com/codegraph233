@@ -39,6 +39,7 @@ type Config struct {
 	Languages   []string     `json:"languages,omitempty"`
 	Exclude     []string     `json:"exclude,omitempty"`
 	ConfigDirs  []string     `json:"config_dirs,omitempty"`
+	GuidMap     []string     `json:"guid_map,omitempty"`
 	Index       IndexOptions `json:"index,omitempty"`
 	Description string       `json:"description,omitempty"`
 
@@ -133,6 +134,54 @@ func Save(cfg *Config) error {
 	}
 	data = append(data, '\n')
 	return os.WriteFile(path, data, 0o644)
+}
+
+// GuidMapFiles resolves candidate guid->path mapping files: explicit entries
+// (file or directory), plus the conventional locations produced by the Unity
+// exporter (`.game-project` data dir and Temp).
+func (c *Config) GuidMapFiles() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		st, err := os.Stat(p)
+		if err != nil {
+			return
+		}
+		if st.IsDir() {
+			for _, name := range []string{"guid-map.tsv", "guid-map.csv", "guid-map.json", "codegraph233-guid-map.tsv"} {
+				child := filepath.Join(p, name)
+				if fi, err := os.Stat(child); err == nil && !fi.IsDir() {
+					cp := filepath.Clean(child)
+					if !seen[cp] {
+						seen[cp] = true
+						out = append(out, cp)
+					}
+				}
+			}
+			return
+		}
+		cp := filepath.Clean(p)
+		if !seen[cp] {
+			seen[cp] = true
+			out = append(out, cp)
+		}
+	}
+	for _, g := range c.GuidMap {
+		p := g
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(c.Dir, g)
+		}
+		add(p)
+	}
+	add(c.DataDir())
+	add(filepath.Join(c.Dir, "Temp"))
+	for _, name := range []string{".codegraph233-guid-map.tsv", "guid-map.tsv"} {
+		add(filepath.Join(c.Dir, name))
+	}
+	return out
 }
 
 // DataDir is where the index and derived data live (git-ignored).

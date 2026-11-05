@@ -151,6 +151,13 @@ CREATE TABLE IF NOT EXISTS asset_edges (
 );
 CREATE INDEX IF NOT EXISTS idx_asset_edges_src ON asset_edges(src);
 CREATE INDEX IF NOT EXISTS idx_asset_edges_dst ON asset_edges(dst);
+CREATE TABLE IF NOT EXISTS guid_map (
+  guid TEXT PRIMARY KEY,
+  path TEXT NOT NULL,
+  name TEXT,
+  type TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_guid_map_path ON guid_map(path);
 `
 
 // Migrate creates the schema and stamps the schema version.
@@ -228,6 +235,25 @@ func (t *Tx) Commit() error { return t.tx.Commit() }
 
 // Rollback aborts the transaction.
 func (t *Tx) Rollback() error { return t.tx.Rollback() }
+
+// AddGuidRows contributes plaintext-meta mappings without overriding the
+// authoritative editor export (INSERT OR IGNORE).
+func (t *Tx) AddGuidRows(rows []GuidRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	stmt, err := t.tx.Prepare(`INSERT OR IGNORE INTO guid_map(guid, path, name, type) VALUES(?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, r := range rows {
+		if _, err := stmt.Exec(r.GUID, r.Path, filepath.Base(r.Path), r.Type); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // FileID returns the row id of a file inside the transaction, or 0.
 func (t *Tx) FileID(root, relPath string) (int64, error) {
@@ -639,6 +665,58 @@ func (s *Store) UpdateRefTarget(updates []RefTargetUpdate) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// GuidRow is one guid -> asset path mapping (from the editor exporter).
+type GuidRow struct {
+	GUID string
+	Path string
+	Type string
+}
+
+// ReplaceGuidMap swaps the whole mapping table in one transaction.
+func (s *Store) ReplaceGuidMap(rows []GuidRow) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM guid_map`); err != nil {
+		tx.Rollback()
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO guid_map(guid, path, name, type) VALUES(?,?,?,?)`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	for i, r := range rows {
+		if _, err := stmt.Exec(r.GUID, r.Path, filepath.Base(r.Path), r.Type); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if i%5000 == 0 && i > 0 {
+			// keep the transaction bounded on very large projects
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+			if tx, err = s.db.Begin(); err != nil {
+				return err
+			}
+			stmt.Close()
+			if stmt, err = tx.Prepare(`INSERT OR REPLACE INTO guid_map(guid, path, name, type) VALUES(?,?,?,?)`); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// GuidCount returns how many guid mappings are loaded.
+func (s *Store) GuidCount() int {
+	var n int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM guid_map`).Scan(&n)
+	return n
 }
 
 // SetMeta writes a key/value pair.

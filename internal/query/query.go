@@ -654,17 +654,27 @@ func (e *Engine) SearchAssets(name, kind, root, pathFilter string, limit int) ([
 
 // AssetEdgeHit is one asset relationship.
 type AssetEdgeHit struct {
-	Src    string `json:"src"`
-	Dst    string `json:"dst"`
-	Kind   string `json:"kind"`
-	Detail string `json:"detail,omitempty"`
-	Line   int    `json:"line,omitempty"`
+	Src     string `json:"src"`
+	Dst     string `json:"dst"`
+	Kind    string `json:"kind"`
+	Detail  string `json:"detail,omitempty"`
+	Line    int    `json:"line,omitempty"`
 	SrcName string `json:"src_name,omitempty"`
 	DstName string `json:"dst_name,omitempty"`
+	SrcPath string `json:"src_path,omitempty"`
+	DstPath string `json:"dst_path,omitempty"`
+	SrcType string `json:"src_type,omitempty"`
+	DstType string `json:"dst_type,omitempty"`
 }
 
 // AssetEdges returns edges in/out for an asset key.
 func (e *Engine) AssetEdges(key, direction string, limit int) ([]AssetEdgeHit, error) {
+	return e.AssetEdgesFiltered(key, direction, nil, limit)
+}
+
+// AssetEdgesFiltered optionally restricts edge kinds (contains/references/
+// instantiates/uses_script/includes/declares).
+func (e *Engine) AssetEdgesFiltered(key, direction string, kinds []string, limit int) ([]AssetEdgeHit, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -672,26 +682,69 @@ func (e *Engine) AssetEdges(key, direction string, limit int) ([]AssetEdgeHit, e
 	if direction == "in" {
 		where = "dst = ?"
 	}
+	kindFilter := ""
+	var kindArgs []any
+	if len(kinds) > 0 {
+		kindFilter = ` AND e.kind IN (` + placeholders(len(kinds)) + `)`
+		for _, k := range kinds {
+			kindArgs = append(kindArgs, k)
+		}
+	}
 	q := `SELECT e.src, e.dst, e.kind, COALESCE(e.detail,''), COALESCE(e.line,0),
 		COALESCE(a.name,''), COALESCE(b.name,'')
 		FROM asset_edges e
 		LEFT JOIN assets a ON a.asset_key = e.src
 		LEFT JOIN assets b ON b.asset_key = e.dst
-		WHERE e.` + where + ` LIMIT ?`
-	rows, err := e.St.DB().Query(q, key, limit)
+		WHERE e.` + where + kindFilter + ` LIMIT ?`
+	args := []any{key}
+	args = append(args, kindArgs...)
+	args = append(args, limit)
+	rows, err := e.St.DB().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []AssetEdgeHit{}
 	for rows.Next() {
 		var h AssetEdgeHit
 		if err := rows.Scan(&h.Src, &h.Dst, &h.Kind, &h.Detail, &h.Line, &h.SrcName, &h.DstName); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, h)
 	}
-	return out, rows.Err()
+	rows.Close()
+	// resolve guid endpoints through the guid map
+	var guids []string
+	for _, h := range out {
+		if g := guidOf(h.Src); g != "" {
+			guids = append(guids, g)
+		}
+		if g := guidOf(h.Dst); g != "" {
+			guids = append(guids, g)
+		}
+	}
+	if len(guids) > 0 {
+		refs := e.lookupGuids(guids)
+		for i := range out {
+			if g := guidOf(out[i].Src); g != "" {
+				if r, ok := refs[g]; ok {
+					out[i].SrcPath, out[i].SrcType = r.Path, r.Type
+					if out[i].SrcName == "" || out[i].SrcName == g {
+						out[i].SrcName = r.Name
+					}
+				}
+			}
+			if g := guidOf(out[i].Dst); g != "" {
+				if r, ok := refs[g]; ok {
+					out[i].DstPath, out[i].DstType = r.Path, r.Type
+					if out[i].DstName == "" || out[i].DstName == g {
+						out[i].DstName = r.Name
+					}
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 // PrefabTree returns objects of a prefab with parent/child edges.

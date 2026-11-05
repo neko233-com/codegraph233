@@ -258,10 +258,14 @@ func parseMeta(absPath, relPath, root string, res *model.FileResult) *model.File
 		return res
 	}
 	assetPath := strings.TrimSuffix(relPath, ".meta")
+	// Path stays the .meta path: InsertAssets cleans by path, and using the
+	// target asset path here would delete that asset's own nodes and edges.
 	res.Assets = append(res.Assets, model.Asset{
-		Key: "guid:" + string(m[1]), Root: root, Kind: "guid_ref", Path: assetPath,
+		Key: "guid:" + string(m[1]), Root: root, Kind: "guid_ref", Path: relPath,
 		Name: path.Base(assetPath), FileID: string(m[1]),
-		Meta: map[string]string{"guid": string(m[1]), "linked": "1"},
+		Meta: map[string]string{
+			"guid": string(m[1]), "linked": "1", "target_path": assetPath,
+		},
 	})
 	return res
 }

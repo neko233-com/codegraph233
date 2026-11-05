@@ -152,9 +152,19 @@ func toolDefs() []toolDef {
 			Description: "List asset relationships (instantiates / uses_script / references / includes / declares) for an exact asset key, in or out.",
 			InputSchema: obj(map[string]any{
 				"key":       str("Exact asset key from cg233_asset_search"),
+				"path":      str("Path substring when key is omitted"),
 				"direction": str("out (default) or in"),
+				"kinds":     str("Optional comma separated edge kinds: contains,references,instantiates,uses_script,includes,declares"),
 				"limit":     num("Default 200"),
-			}, "key"),
+			}),
+		},
+		{
+			Name: "cg233_guid_lookup",
+			Description: "Resolve a guid (32 hex) or asset path substring to its asset path/type plus which prefabs/materials reference it and what it references. Needs a guid map exported from the editor (Tools/codegraph233/导出 GUID 映射); plaintext .meta is also auto-indexed.",
+			InputSchema: obj(map[string]any{
+				"guid":  str("32-hex guid or path substring"),
+				"limit": num("Reference limit (default 100)"),
+			}, "guid"),
 		},
 		{
 			Name: "cg233_asset_stats",
@@ -355,7 +365,31 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		hits, err := eng.AssetEdges(argStr(args, "key", ""), argStr(args, "direction", "out"), argInt(args, "limit", 200))
+		key := argStr(args, "key", "")
+		if key == "" {
+			pth := argStr(args, "path", "")
+			if pth == "" {
+				return "", fmt.Errorf("asset_refs needs key or path")
+			}
+			h, _, err := eng.AssetInfo("", pth, 1)
+			if err != nil {
+				return "", err
+			}
+			key = h.Key
+		}
+		hits, err := eng.AssetEdgesFiltered(key, argStr(args, "direction", "out"),
+			splitCSV(argStr(args, "kinds", "")), argInt(args, "limit", 200))
+		if err != nil {
+			return "", err
+		}
+		return toJSON(hits)
+
+	case "cg233_guid_lookup":
+		eng, err := s.requireEngine()
+		if err != nil {
+			return "", err
+		}
+		hits, err := eng.LookupGuid(argStr(args, "guid", ""), argInt(args, "limit", 100))
 		if err != nil {
 			return "", err
 		}

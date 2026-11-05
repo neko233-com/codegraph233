@@ -81,6 +81,21 @@ func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 		roots = append(roots, rs)
 	}
 
+	// guid -> path mapping (from the Unity/Tuanjie exporter or plaintext .meta)
+	guidRows, guidFiles, gErr := LoadGuidMaps(cfg)
+	if gErr != nil && !opts.Quiet {
+		fmt.Fprintf(os.Stderr, "[guid] %v\n", gErr)
+	}
+	if len(guidRows) > 0 {
+		if err := st.ReplaceGuidMap(guidRows); err != nil {
+			return nil, err
+		}
+	}
+	stats.GuidEntries = len(guidRows)
+	if !opts.Quiet && len(guidRows) > 0 {
+		fmt.Fprintf(os.Stderr, "[guid] %d mappings from %d file(s)\n", len(guidRows), len(guidFiles))
+	}
+
 	files, present := scanRoots(cfg, roots, st, opts)
 	if !opts.Quiet && opts.Progress != nil {
 		opts.Progress(0, len(files), "")
@@ -209,10 +224,6 @@ func scanRoots(cfg *config.Config, roots []rootScan, st *store.Store, opts Optio
 					return nil
 				}
 				if lang == "" {
-					return nil
-				}
-				if lang == "asset" && strings.HasSuffix(rel, ".meta") && rs.Strategy != "unity" {
-					// Tuanjie meta guids are encrypted; mapping is impossible without the editor bridge.
 					return nil
 				}
 				limit := int64(2 << 20)
@@ -489,6 +500,23 @@ func writeResults(st *store.Store, files []scanFile, results []*model.FileResult
 			tx.Rollback()
 			return err
 		}
+		var metaGuids []store.GuidRow
+		for _, a := range res.Assets {
+			if a.Kind != "guid_ref" {
+				continue
+			}
+			if tp := a.Meta["target_path"]; tp != "" {
+				g := a.Meta["guid"]
+				if g == "" {
+					g = a.FileID
+				}
+				metaGuids = append(metaGuids, store.GuidRow{GUID: g, Path: tp})
+			}
+		}
+		if err := tx.AddGuidRows(metaGuids); err != nil {
+			tx.Rollback()
+			return err
+		}
 		if err := tx.InsertAssetEdges(res.AssetEdges); err != nil {
 			tx.Rollback()
 			return err
@@ -617,6 +645,9 @@ type Status struct {
 	AssetEdges int            `json:"asset_edges"`
 	ConfigDirs []string       `json:"config_dirs,omitempty"`
 	Languages  []string       `json:"languages,omitempty"`
+	GuidEntries int           `json:"guid_map_entries"`
+	GuidRefs    int           `json:"guid_refs"`
+	GuidMapped  int           `json:"guid_refs_mapped"`
 	LanguagePolicy []config.LanguagePolicy `json:"language_policy"`
 }
 
@@ -643,5 +674,9 @@ func ReadStatus(cfg *config.Config) Status {
 	s.IndexedAt = st.GetMeta("indexed_at")
 	s.Strategy = st.GetMeta("strategy")
 	s.Files, s.Symbols, s.Refs, s.Edges, s.Assets, s.AssetEdges = st.Counts()
+	s.GuidEntries = st.GuidCount()
+	_ = st.DB().QueryRow(`SELECT COUNT(*) FROM (SELECT DISTINCT dst FROM asset_edges WHERE dst LIKE 'guid:%')`).Scan(&s.GuidRefs)
+	_ = st.DB().QueryRow(`SELECT COUNT(*) FROM (SELECT DISTINCT dst FROM asset_edges e
+		WHERE dst LIKE 'guid:%' AND EXISTS (SELECT 1 FROM guid_map g WHERE g.guid = SUBSTR(e.dst, 6)))`).Scan(&s.GuidMapped)
 	return s
 }

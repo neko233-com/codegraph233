@@ -64,7 +64,7 @@
 | 材质/动画/控制器/时间轴/混音器 | 已实现 | shader guid、贴图引用、clip/state/track 引用 |
 | asmdef | 已实现 | 程序集名、引用、平台 |
 | 配表 | 已实现 | xlsx（每个 sheet 一张表，**自动挑字段名行**）、csv/tsv、json；表头/行数/列数/说明行；读取点与热重载探测 |
-| guid → 路径 | 部分 | Unity 明文 `.meta` 全量映射；团结加密 `.meta` 无法反解（保留 guid 关系） |
+| guid → 路径 | 已实现 | 编辑器导出 TSV（100% 资产，本仓 27,412 条）为主；明文 `.meta`（32 位）自动补充；本仓引用覆盖率 96.7% |
 
 ## 4. MCP 契约
 
@@ -80,7 +80,7 @@
 
 工具清单（详见 README）：
 
-`cg233_status` / `cg233_index` / `cg233_overview` / `cg233_find_symbol` / `cg233_get_symbol` / `cg233_file_outline` / `cg233_find_referencing_symbols` / `cg233_call_graph` / `cg233_symbol_path` / `cg233_impact` / `cg233_search_pattern` / `cg233_asset_search` / `cg233_asset_tree` / `cg233_asset_refs` / `cg233_shader_info` / `cg233_config_tables` / `cg233_config_readers`
+`cg233_status` / `cg233_index` / `cg233_overview` / `cg233_find_symbol` / `cg233_get_symbol` / `cg233_file_outline` / `cg233_find_referencing_symbols` / `cg233_call_graph` / `cg233_symbol_path` / `cg233_impact` / `cg233_search_pattern` / `cg233_asset_search` / `cg233_asset_tree` / `cg233_asset_refs` / `cg233_asset_stats` / `cg233_asset_info` / `cg233_guid_lookup` / `cg233_shader_info` / `cg233_config_tables` / `cg233_config_readers`
 
 ## 5. 项目接入与分发
 
@@ -112,6 +112,7 @@
 | 内存 | 全量重建峰值 ≤ 4GB；稳态查询 < 500MB |
 | 稳定性 | 单文件解析失败不影响整批；索引中断后可增量续跑 |
 | 可解释性 | 每条跨文件边必须带置信度；未解析引用可统计 |
+| 资产关联 | 提供编辑器导出时，guid→资产解析覆盖率 ≥ 95%（本仓 96.7%）；无编辑器导出时明确报告覆盖率 |
 
 ## 8. 演进路线
 

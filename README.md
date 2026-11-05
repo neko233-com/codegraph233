@@ -31,9 +31,15 @@
 | config | xlsx / csv / tsv / json | 表头、行数、读取点、热重载 |
 
 * **二进制资产只读头部**：图片/音频/视频约 8KB，字体按表偏移读 name/maxp，MP4 支持 moov 在文件尾（读尾部 256KB），从不加载整文件。
-* **Unity（明文 `.meta`）**：额外索引 `**/*.meta` 建立 `guid → 资产路径`，prefab/材质里的 32 位 guid 直接解析成资产路径。
-* **团结（加密 `.meta`）**：无法反解 guid，保留 guid 引用关系并在 `status` 的 notes 里标注；`cg233_asset_search` 仍可按名称/类型/路径查资产。
-* 新增 MCP 工具：`cg233_asset_stats`（按家族统计数量/体积 + 最大文件）、`cg233_asset_info`（元信息 + 双向引用）。
+### GUID 关联（prefab ↔ 资产的真实关系）
+
+* **编辑器导出（推荐，100% 覆盖）**：`tools/unity/Codegraph233GuidExporter.cs` 提供菜单 `Tools/codegraph233/导出 GUID 映射`，产物 `Temp/codegraph233-guid-map.tsv`（本仓 27,412 条 / 2 秒）。`codegraph233 index` 自动发现，产物全量替换（`guid_map` 表）。
+* **明文 `.meta` 兜底**：索引仍会扫描 `**/*.meta`，接受 32 位明文 guid（本仓 41.8% 明文），只补充、不覆盖编辑器导出。
+* **效果（本仓实测）**：4,933 个 guid 引用中 **4,771 个解析到资产（96.7%）**；`cg233_guid_lookup` 能回答“这个 guid 是谁、被谁引用、它引用了谁”，`cg233_asset_refs(path=...)` 能列出 prefab → 嵌套 prefab / 脚本 / 贴图 / 材质，边带 `dst_path` 与 `dst_type`。
+* 团结加密 guid 仅靠 `.meta` 无法反解（无导出时覆盖率约 13.6%），`status` 会用 `guid_refs_mapped / guid_refs` 明确显示当前覆盖率。
+* 资产新增/改名后重新导出一次即可；CI 可用 `-executeMethod Codegraph233.Editor.Codegraph233GuidExporter.ExportBatch`。
+
+新增 MCP 工具：`cg233_asset_stats`（按家族统计数量/体积 + 最大文件）、`cg233_asset_info`（元信息 + 双向引用）、`cg233_guid_lookup`（guid/路径 → 资产 + 双向关系）。
 
 ## 缓存与排除
 
@@ -92,6 +98,7 @@ codegraph233 install-mcp --scope both --print   # 只看不改
 ```sh
 cd <game-project>
 codegraph233 init          # 写 .codegraph233.json（自动识别引擎/语言/后端目录）
+# 团结项目：先导出 guid 映射（见 tools/unity/README.md），再索引
 codegraph233 index         # 全量索引，之后增量
 codegraph233 status        # 识别结果 + 策略矩阵 + 统计
 codegraph233 install-mcp   # 写各客户端 MCP 配置
@@ -139,8 +146,9 @@ codegraph233 install-mcp   # 写各客户端 MCP 配置
 | `cg233_search_pattern` | 正则检索 + 上下文（补图未覆盖的语法） |
 | `cg233_asset_search` | prefab/scene 对象、shader、配表 |
 | `cg233_asset_tree` | prefab/scene 层级 |
-| `cg233_asset_refs` | instantiates / uses_script / references / includes |
+| `cg233_asset_refs` | instantiates / uses_script / references / includes（支持 `path` 与 `kinds` 过滤，边带 `dst_path`/`dst_type`） |
 | `cg233_shader_info` | properties、pass、include、keyword |
+| `cg233_guid_lookup` | guid / 路径 → 资产路径、类型、被谁引用、引用了谁 |
 | `cg233_config_tables` | 配表清单（表头/行数/来源） |
 | `cg233_config_readers` | 读取点 + 是否支持热重载 |
 
@@ -150,13 +158,14 @@ codegraph233 install-mcp   # 写各客户端 MCP 配置
 
 | | |
 | --- | --- |
-| 文件 | 27,736（含代码 / prefab / shader / 配表 / 图片·音频·视频·字体·spine·材质等资产） |
+| 文件 | 48,101（代码 / prefab / shader / 配表 / 资产 / 20k `.meta`） |
 | 符号 / 边 | 271k / 702k |
-| 资产 | 33,891（image 6,895 · material 672 · spine 200+199 · audio 321 · font 3 · tmp_font 2 · timeline 120 · asmdef 159 …） |
-| 全量 `--force` | ~89s |
-| 无改动增量 | ~30s（引用重绑定仍是全局） |
+| 资产 | 40,688（image 6,895 · material 672 · spine 200+199 · audio 321 · font 3 · tmp_font 2 · timeline 120 · asmdef 159 · guid_ref 27k …） |
+| GUID 映射 | 27,720 条；引用覆盖率 4,771 / 4,933 = **96.7%** |
+| 全量 `--force` | ~108s |
+| 无改动增量 | ~40s（引用重绑定仍是全局） |
 | DB | ~1.0GB（WAL 在退出时 TRUNCATE 收敛） |
-| 排除后减少 | 8,580 个美术备份/工具文件（36,316 → 27,736） |
+| 排除后减少 | 8,580 个美术备份/工具文件 |
 
 解析按 CPU 并行，写库分批，峰值内存约 3GB（23k 文件全量重建）。
 

@@ -109,6 +109,7 @@ type IndexStats struct {
 	Assets       int            `json:"assets"`
 	AssetEdges   int            `json:"asset_edges"`
 	Unresolved   int            `json:"unresolved_refs"`
+	GuidEntries  int            `json:"guid_map_entries"`
 	Errors       []string       `json:"errors,omitempty"`
 	ByLang       map[string]int `json:"files_by_lang"`
 	ByRoot       map[string]int `json:"files_by_root"`
