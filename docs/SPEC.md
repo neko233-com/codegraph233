@@ -72,7 +72,10 @@
 
 * `profile`: `full` / `game` / `code` / `minimal`；`features` 八项（code、type_deps、prefabs、shaders、assets、meta、config_tables、guid_map）可逐项覆盖。
 * `languages: ["auto"]` 按实际检测启用；显式列表优先。
-* 写入档：默认快速档（`journal_mode=MEMORY`、`synchronous=OFF`、mmap、128MB cache），索引可重建，崩溃只丢索引；`index --safe` 使用 WAL 持久档。
+* 写入档：默认快速档（`journal_mode=OFF`、`synchronous=OFF`、mmap、128MB cache），索引可重建，崩溃只丢索引；`index --safe` 使用 WAL 持久档。
+* 写库模式：`single`（默认，整轮一个事务，实测 64.9s）> `batch`（每 300 文件提交，69.4s）> `none`（无事务，155.1s）。无事务不会更快。
+* 调度：`index --low-priority`（Windows BELOW_NORMAL）避免抢编辑器 CPU；索引期 GC 目标 250。
+* 多项目：`~/.codegraph233/projects.json` 注册表 + 每项目独立 DB（懒加载），工具统一接受 `project` 选择器。
 * 绑定阶段：分页读取（10 万/页）、按 CPU 并行解析、只写目标发生变化的引用。
 * 空间：`codegraph233 compact` 执行 `ANALYZE` + `VACUUM`；本仓实测 1,019MB → 562MB（-45%）。
 * 非目标补充：不追求"崩溃后索引完好"，只保证"索引可无副作用重建"；资产元信息不替代 AssetDatabase 的导入设置。

@@ -88,6 +88,13 @@ func Load(start string) (*Config, error) {
 	if env := os.Getenv("CODEGRAPH233_ROOT"); env != "" {
 		start = env
 	}
+	return LoadDir(start)
+}
+
+// LoadDir loads the config for an explicit directory without honouring the
+// CODEGRAPH233_ROOT override.  Multi-project servers use it so selecting a
+// project is not silently redirected to the launch project.
+func LoadDir(start string) (*Config, error) {
 	dir, ok := Find(start)
 	if !ok {
 		abs, err := filepath.Abs(start)

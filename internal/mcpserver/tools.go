@@ -30,7 +30,7 @@ func boolean(desc string) map[string]any {
 }
 
 func toolDefs() []toolDef {
-	return []toolDef{
+	defs := []toolDef{
 		{
 			Name: "cg233_status",
 			Description: "Show index status: detected engine strategy (unity/tuanjie/ue), configured roots, languages, and graph counts. Call this first.",
@@ -224,23 +224,47 @@ func toolDefs() []toolDef {
 			}),
 		},
 	}
+	for i := range defs {
+		if defs[i].Name == "cg233_projects" {
+			continue
+		}
+		if props, ok := defs[i].InputSchema["properties"].(map[string]any); ok {
+			props["project"] = str("Optional project name/root (see cg233_projects); defaults to the current project")
+		}
+	}
+	defs = append([]toolDef{{
+		Name: "cg233_projects",
+		Description: "List projects served by this MCP process (registered + current): name, root, whether an index exists, indexed time, file/symbol counts. Pass any name/root as the `project` argument of other tools.",
+		InputSchema: obj(map[string]any{}),
+	}}, defs...)
+	return defs
 }
+
 
 func (s *Server) call(name string, args map[string]any) (string, error) {
 	switch name {
+	case "cg233_projects":
+		return toJSON(s.projectRows())
+
 	case "cg233_status":
-		st := indexer.ReadStatus(s.cfg)
-		return toJSON(st)
+		cfg, err := s.cfgFor(s.resolveRoot(argStr(args, "project", "")))
+		if err != nil {
+			return "", err
+		}
+		return toJSON(indexer.ReadStatus(cfg))
 
 	case "cg233_index":
 		if err := s.ensureIndex(args); err != nil {
 			return "", err
 		}
-		st := indexer.ReadStatus(s.cfg)
-		return toJSON(st)
+		cfg, err := s.cfgFor(s.resolveRoot(argStr(args, "project", "")))
+		if err != nil {
+			return "", err
+		}
+		return toJSON(indexer.ReadStatus(cfg))
 
 	case "cg233_overview":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -251,7 +275,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(o)
 
 	case "cg233_find_symbol":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -265,7 +289,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(hits)
 
 	case "cg233_get_symbol":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -283,7 +307,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(res)
 
 	case "cg233_file_outline":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -294,7 +318,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(hits)
 
 	case "cg233_find_referencing_symbols":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -305,7 +329,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(hits)
 
 	case "cg233_call_graph":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -318,7 +342,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(hits)
 
 	case "cg233_symbol_path":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -329,7 +353,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(steps)
 
 	case "cg233_impact":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -340,7 +364,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(imp)
 
 	case "cg233_search_pattern":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -353,7 +377,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(hits)
 
 	case "cg233_asset_search":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -366,7 +390,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(hits)
 
 	case "cg233_asset_tree":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -377,7 +401,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(map[string]any{"objects": objs, "edges": edges})
 
 	case "cg233_asset_refs":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -401,7 +425,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(hits)
 
 	case "cg233_asset_orphans":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -412,7 +436,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(hits)
 
 	case "cg233_project_health":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -423,7 +447,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(h)
 
 	case "cg233_guid_lookup":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -434,7 +458,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(hits)
 
 	case "cg233_asset_stats":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -445,7 +469,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(stats)
 
 	case "cg233_asset_info":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -460,7 +484,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(map[string]any{"asset": h, "edges": edges})
 
 	case "cg233_shader_info":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -492,7 +516,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		})
 
 	case "cg233_config_tables":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}
@@ -503,7 +527,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		return toJSON(tables)
 
 	case "cg233_config_readers":
-		eng, err := s.requireEngine()
+		eng, err := s.engineFor(argStr(args, "project", ""))
 		if err != nil {
 			return "", err
 		}

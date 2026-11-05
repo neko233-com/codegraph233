@@ -15,6 +15,8 @@ import (
 	"github.com/neko233-com/codegraph233/internal/detect"
 	"github.com/neko233-com/codegraph233/internal/indexer"
 	"github.com/neko233-com/codegraph233/internal/mcpserver"
+	"github.com/neko233-com/codegraph233/internal/priority"
+	"github.com/neko233-com/codegraph233/internal/projects"
 	"github.com/neko233-com/codegraph233/internal/store"
 )
 
@@ -40,6 +42,12 @@ func main() {
 		runInstallMCP(args)
 	case "compact":
 		runCompact(args)
+	case "register":
+		runRegister(args)
+	case "unregister":
+		runUnregister(args)
+	case "projects":
+		runProjects(args)
 	case "version", "--version", "-v":
 		fmt.Println("codegraph233 " + version)
 	case "help", "--help", "-h":
@@ -101,6 +109,8 @@ func runIndex(args []string) {
 	root := fs.String("root", "", "project root (defaults to cwd / CODEGRAPH233_ROOT)")
 	safe := fs.Bool("safe", false, "use the durable WAL profile instead of the fast in-memory journal")
 	profile := fs.String("profile", "", "override feature profile: full|game|code|minimal")
+	writeMode := fs.String("write-mode", "single", "index write mode: single (one transaction, default)|batch|none")
+	lowPriority := fs.Bool("low-priority", true, "run the index at below-normal process priority to avoid stealing CPU from the editor")
 	_ = fs.Parse(args)
 	if *root != "" {
 		os.Setenv("CODEGRAPH233_ROOT", *root)
@@ -113,7 +123,13 @@ func runIndex(args []string) {
 	if *profile != "" {
 		cfg.Profile = *profile
 	}
-	opts := indexer.Options{Force: *force, Jobs: *jobs, Quiet: *quiet, FastWrite: !*safe}
+	_ = writeMode
+	if *lowPriority {
+		if err := priority.SetLow(); err != nil {
+			fmt.Fprintln(os.Stderr, "warn: set low priority:", err)
+		}
+	}
+	opts := indexer.Options{Force: *force, Jobs: *jobs, Quiet: *quiet, FastWrite: !*safe, WriteMode: *writeMode}
 	if !*quiet {
 		last := ""
 		opts.Progress = func(done, total int, cur string) {
@@ -284,6 +300,107 @@ func ensureGitignore(dir string) {
 
 // runCompact reclaims space and refreshes planner statistics.  It is optional:
 // the index stays correct without it, it just gets physically smaller.
+// runRegister adds a project root to the user-level registry so one global MCP
+// process can serve it.
+func runRegister(args []string) {
+	fs := flag.NewFlagSet("register", flag.ExitOnError)
+	root := fs.String("root", "", "project root (defaults to cwd)")
+	_ = fs.Parse(args)
+	dir := *root
+	if dir == "" {
+		dir, _ = os.Getwd()
+	}
+	cfg, err := config.Load(dir)
+	if err != nil {
+		fatal(err)
+	}
+	if _, err := os.Stat(cfg.DBPath()); err != nil {
+		fmt.Fprintln(os.Stderr, "提示: 该项目还没有索引，稍后运行 `codegraph233 index`")
+	}
+	reg, err := projects.Load()
+	if err != nil {
+		fatal(err)
+	}
+	added := reg.Add(cfg.Dir)
+	if err := reg.Save(); err != nil {
+		fatal(err)
+	}
+	if added {
+		fmt.Printf("registered %s\n", cfg.Dir)
+	} else {
+		fmt.Printf("already registered %s\n", cfg.Dir)
+	}
+}
+
+// runUnregister removes a project from the registry.
+func runUnregister(args []string) {
+	fs := flag.NewFlagSet("unregister", flag.ExitOnError)
+	root := fs.String("root", "", "project root (defaults to cwd)")
+	_ = fs.Parse(args)
+	dir := *root
+	if dir == "" {
+		dir, _ = os.Getwd()
+	}
+	reg, err := projects.Load()
+	if err != nil {
+		fatal(err)
+	}
+	if !reg.Remove(dir) {
+		fmt.Printf("not registered: %s\n", dir)
+		return
+	}
+	if err := reg.Save(); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("unregistered %s\n", dir)
+}
+
+// runProjects lists every registered project with its index status.
+func runProjects(args []string) {
+	fs := flag.NewFlagSet("projects", flag.ExitOnError)
+	asJSON := fs.Bool("json", false, "print JSON")
+	_ = fs.Parse(args)
+	reg, err := projects.Load()
+	if err != nil {
+		fatal(err)
+	}
+	type row struct {
+		Name      string `json:"name"`
+		Root      string `json:"root"`
+		Indexed   bool   `json:"indexed"`
+		IndexedAt string `json:"indexed_at,omitempty"`
+		Files     int    `json:"files"`
+		Symbols   int    `json:"symbols"`
+	}
+	var rows []row
+	for _, p := range reg.Projects {
+		cfg, cErr := config.Load(p.Root)
+		if cErr != nil {
+			continue
+		}
+		st := indexer.ReadStatus(cfg)
+		rows = append(rows, row{
+			Name: p.Name, Root: p.Root, Indexed: st.Exists,
+			IndexedAt: st.IndexedAt, Files: st.Files, Symbols: st.Symbols,
+		})
+	}
+	if *asJSON {
+		writeJSON(rows)
+		return
+	}
+	if len(rows) == 0 {
+		fmt.Println("no registered projects; run `codegraph233 register` inside a project")
+		return
+	}
+	for _, r := range rows {
+		state := "not indexed"
+		if r.Indexed {
+			state = fmt.Sprintf("%d files / %d symbols, %s", r.Files, r.Symbols, r.IndexedAt)
+		}
+		fmt.Printf("%-24s %-52s %s\n", r.Name, r.Root, state)
+	}
+}
+
 func runCompact(args []string) {
 	fs := flag.NewFlagSet("compact", flag.ExitOnError)
 	root := fs.String("root", "", "project root (defaults to cwd / CODEGRAPH233_ROOT)")

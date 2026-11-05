@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ type Options struct {
 	Jobs      int
 	Quiet     bool
 	FastWrite bool
+	WriteMode string // batch | single | none (default batch)
 	TypeDeps  bool
 	Progress  func(done, total int, current string)
 }
@@ -58,6 +60,11 @@ const (
 // Run indexes every configured root and rebuilds the symbol graph.
 func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 	started := time.Now()
+	// Indexing is throughput-bound and owns its own process: raise the GC target
+	// so the collector runs less often (fewer stop-the-world pauses).  The
+	// previous value is restored when the run ends.
+	prevGC := debug.SetGCPercent(250)
+	defer debug.SetGCPercent(prevGC)
 	det := detect.Detect(cfg)
 	stats := &model.IndexStats{Roots: len(cfg.Roots), ByLang: map[string]int{}, ByRoot: map[string]int{}}
 
@@ -151,7 +158,7 @@ func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 				parseErrors = append(parseErrors, r.Errors...)
 			}
 		}
-		if err := writeResults(st, part, results); err != nil {
+		if err := writeResults(st, part, results, opts.WriteMode); err != nil {
 			return nil, err
 		}
 		if !opts.Quiet {
@@ -500,8 +507,11 @@ func goModuleOf(abs string) string {
 	return ""
 }
 
-func writeResults(st *store.Store, files []scanFile, results []*model.FileResult) error {
-	tx, err := st.Begin()
+func writeResults(st *store.Store, files []scanFile, results []*model.FileResult, mode string) error {
+	if mode == "" {
+		mode = "batch"
+	}
+	tx, err := st.BeginMode(mode)
 	if err != nil {
 		return err
 	}
@@ -572,12 +582,12 @@ func writeResults(st *store.Store, files []scanFile, results []*model.FileResult
 			return err
 		}
 		pending++
-		if pending >= 300 {
+		if mode == "batch" && pending >= 300 {
 			if err := tx.Commit(); err != nil {
 				return err
 			}
 			pending = 0
-			if tx, err = st.Begin(); err != nil {
+			if tx, err = st.BeginMode(mode); err != nil {
 				return err
 			}
 		}

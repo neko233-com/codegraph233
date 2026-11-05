@@ -78,7 +78,7 @@ codegraph233 status                        # 显示 profile 与 7 项能力开�
 
 | 措施 | 效果（本仓 48,101 文件） |
 | --- | --- |
-| 全量 `--force` | **~60s**（优化前 108s；含类型依赖 174 万 refs / 3.7 万资产直接边） |
+| 全量 `--force` | **~65s**（single 写库模式；含类型依赖 174 万 refs / 3.7 万资产直接边） |
 | 无改动增量 | **~12s**（优化前 38s） |
 | 快速写入档（默认） | `journal_mode=MEMORY` + `synchronous=OFF` + `mmap` + 128MB cache；崩溃只丢索引，可重建 |
 | 持久档 | `index --safe`（WAL + NORMAL），适合边索引边查询 |
@@ -90,6 +90,36 @@ codegraph233 status                        # 显示 profile 与 7 项能力开�
 | 空间回收 | `codegraph233 compact`（ANALYZE + VACUUM）：本仓 **1,019MB → 562MB（-45%）**，建议全量重建几次后执行一次 |
 
 > MCP 内的 `cg233_index` 固定用持久档（服务端持有读连接，避免 journal 切档冲突）。
+
+## 多项目：一个 MCP 服务多个仓库
+
+```sh
+cd /path/to/projectA && codegraph233 init && codegraph233 index && codegraph233 register
+cd /path/to/projectB && codegraph233 init && codegraph233 index && codegraph233 register
+codegraph233 projects          # 列出 + 索引状态
+```
+
+* 注册表：`~/.codegraph233/projects.json`。
+* 全局 MCP 条目（`serve`，不带 `--root`）启动时会加载注册表；**每个项目独立 DB，按需打开并缓存**，一个进程可同时服务多个仓库。
+* 所有工具都接受可选 `project` 参数（项目名 / 根路径 / 路径片段），`cg233_projects` 列出可用项目；不传则用启动项目。
+* 显式路径不会被 `CODEGRAPH233_ROOT` 覆盖（多项目选择用 `config.LoadDir`）。
+
+## 写库模式：有无事务的实测
+
+| 模式 | 含义 | 本仓 48k 文件全量 |
+| --- | --- | --- |
+| `single`（默认） | 整个写库一个事务 | **64.9s** |
+| `batch` | 每 300 个文件提交一次 | 69.4s |
+| `none` | 无事务（每条语句自动提交） | 155.1s |
+
+结论：单进程单连接下没有跨进程锁竞争，"无事务"反而慢 2.4 倍（每条语句一次提交）。真正省掉的是**日志与 fsync**：快速档已用 `journal_mode=OFF` + `synchronous=OFF` + `mmap`，索引可重建，崩溃只损失一次索引。
+
+## 避免卡顿
+
+* `index --low-priority`（默认开启）：Windows 下把进程设为 `BELOW_NORMAL_PRIORITY_CLASS`，不抢编辑器/游戏 CPU。
+* `index --safe`：WAL 持久档，适合边索引边查询（MCP 内的 `cg233_index` 固定用这个）。
+* 索引期 GC 目标设为 250（减少 GC 停顿），结束后恢复。
+* 大项目可用 `--jobs N` 限制并行，或把 `features` 里不需要的资产/language 关掉。
 
 ## 语言与引擎策略
 

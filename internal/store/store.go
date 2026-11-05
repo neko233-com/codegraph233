@@ -37,7 +37,10 @@ func openWith(path string, fast bool) (*Store, error) {
 	}
 	pragmas := "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(8000)&_pragma=temp_store(MEMORY)&_pragma=cache_size(-32000)"
 	if fast {
-		pragmas = "?_pragma=journal_mode(MEMORY)&_pragma=synchronous(OFF)&_pragma=busy_timeout(8000)" +
+		// journal_mode=OFF removes the rollback journal entirely: the closest
+		// SQLite gets to "no transaction overhead".  The index is rebuildable, so
+		// a crash during a run only costs a re-index.
+		pragmas = "?_pragma=journal_mode(OFF)&_pragma=synchronous(OFF)&_pragma=busy_timeout(8000)" +
 			"&_pragma=temp_store(MEMORY)&_pragma=cache_size(-131072)&_pragma=mmap_size(268435456)"
 	}
 	dsn := "file:" + filepath.ToSlash(path) + pragmas
@@ -250,44 +253,122 @@ func (s *Store) LoadFileStates() (map[string]FileState, error) {
 
 // Tx is a write transaction with reusable statements.
 type Tx struct {
-	tx         *sql.Tx
-	delSym     *sql.Stmt
-	delRefs    *sql.Stmt
-	delAssets  *sql.Stmt
-	delAssetEd *sql.Stmt
+	db           *sql.DB
+	mode         string
+	tx           *sql.Tx
+	delSym       *sql.Stmt
+	delRefs      *sql.Stmt
+	delAssets    *sql.Stmt
+	delAssetEd   *sql.Stmt
+	insSymbol    *sql.Stmt
+	insRef       *sql.Stmt
+	insAsset     *sql.Stmt
+	insAssetEdge *sql.Stmt
+	insGuid      *sql.Stmt
 }
 
-// Begin starts a write transaction.
-func (s *Store) Begin() (*Tx, error) {
-	tx, err := s.db.Begin()
+// Begin starts a write transaction (batch mode).
+func (s *Store) Begin() (*Tx, error) { return s.BeginMode("batch") }
+
+// BeginMode starts a write session:
+//   - batch  : explicit transaction, caller commits every N files
+//   - single : one transaction for the whole run (caller commits at the end)
+//   - none   : autocommit, no transaction at all (each statement commits)
+//
+// In `none` mode statements still go through prepared statements on the pool so
+// the only difference versus `batch` is transactionality itself.
+func (s *Store) BeginMode(mode string) (*Tx, error) {
+	t := &Tx{db: s.db, mode: mode}
+	var err error
+	prepare := func(q string) (*sql.Stmt, error) {
+		if mode == "none" {
+			return s.db.Prepare(q)
+		}
+		return t.tx.Prepare(q)
+	}
+	if mode != "none" {
+		if t.tx, err = s.db.Begin(); err != nil {
+			return nil, err
+		}
+	}
+	t.delSym, err = prepare(`DELETE FROM symbols WHERE file_id = ?`)
 	if err != nil {
 		return nil, err
 	}
-	t := &Tx{tx: tx}
-	t.delSym, err = tx.Prepare(`DELETE FROM symbols WHERE file_id = ?`)
+	t.delRefs, err = prepare(`DELETE FROM refs WHERE file_id = ?`)
 	if err != nil {
 		return nil, err
 	}
-	t.delRefs, err = tx.Prepare(`DELETE FROM refs WHERE file_id = ?`)
+	t.delAssets, err = prepare(`DELETE FROM assets WHERE path = ?`)
 	if err != nil {
 		return nil, err
 	}
-	t.delAssets, err = tx.Prepare(`DELETE FROM assets WHERE path = ?`)
+	t.delAssetEd, err = prepare(`DELETE FROM asset_edges WHERE src IN (SELECT asset_key FROM assets WHERE path = ?) OR dst IN (SELECT asset_key FROM assets WHERE path = ?)`)
 	if err != nil {
 		return nil, err
 	}
-	t.delAssetEd, err = tx.Prepare(`DELETE FROM asset_edges WHERE src IN (SELECT asset_key FROM assets WHERE path = ?) OR dst IN (SELECT asset_key FROM assets WHERE path = ?)`)
-	if err != nil {
+	if t.insSymbol, err = prepare(`INSERT INTO symbols
+		(file_id, root, lang, kind, name, qualname, namespace, parent_id, start_line, end_line,
+		 signature, modifiers, param_count, container, module)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`); err != nil {
+		return nil, err
+	}
+	if t.insRef, err = prepare(`INSERT INTO refs
+		(src_id, src_key, file_id, root, name, receiver, receiver_type, kind, namespace_hint, line, arity)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`); err != nil {
+		return nil, err
+	}
+	if t.insAsset, err = prepare(`INSERT INTO assets(asset_key, root, kind, path, name, unity_id, line, meta)
+		VALUES(?,?,?,?,?,?,?,?)
+		ON CONFLICT(asset_key) DO UPDATE SET root=excluded.root,
+		  kind = CASE WHEN excluded.path <> '' THEN excluded.kind ELSE assets.kind END,
+		  path = CASE WHEN excluded.path <> '' THEN excluded.path ELSE assets.path END,
+		  name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE assets.name END,
+		  unity_id = COALESCE(NULLIF(excluded.unity_id,''), assets.unity_id),
+		  line=excluded.line, meta=excluded.meta`); err != nil {
+		return nil, err
+	}
+	if t.insAssetEdge, err = prepare(`INSERT OR IGNORE INTO asset_edges(src, dst, kind, line, detail, root) VALUES(?,?,?,?,?,?)`); err != nil {
+		return nil, err
+	}
+	if t.insGuid, err = prepare(`INSERT OR IGNORE INTO guid_map(guid, path, name, type) VALUES(?,?,?,?)`); err != nil {
 		return nil, err
 	}
 	return t, nil
 }
 
-// Commit finalizes the transaction.
-func (t *Tx) Commit() error { return t.tx.Commit() }
+func (t *Tx) exec(q string, args ...any) (sql.Result, error) {
+	if t.tx != nil {
+		return t.tx.Exec(q, args...)
+	}
+	return t.db.Exec(q, args...)
+}
 
-// Rollback aborts the transaction.
-func (t *Tx) Rollback() error { return t.tx.Rollback() }
+func (t *Tx) queryRow(q string, args ...any) *sql.Row {
+	if t.tx != nil {
+		return t.tx.QueryRow(q, args...)
+	}
+	return t.db.QueryRow(q, args...)
+}
+
+// Commit finalizes the transaction (no-op in `none` mode).
+func (t *Tx) Commit() error {
+	if t.tx == nil {
+		return nil
+	}
+	return t.tx.Commit()
+}
+
+// Rollback aborts the transaction (no-op in `none` mode).
+func (t *Tx) Rollback() error {
+	if t.tx == nil {
+		return nil
+	}
+	return t.tx.Rollback()
+}
+
+// Mode reports the write mode of this session.
+func (t *Tx) Mode() string { return t.mode }
 
 // AddGuidRows contributes plaintext-meta mappings without overriding the
 // authoritative editor export (INSERT OR IGNORE).
@@ -295,11 +376,7 @@ func (t *Tx) AddGuidRows(rows []GuidRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	stmt, err := t.tx.Prepare(`INSERT OR IGNORE INTO guid_map(guid, path, name, type) VALUES(?,?,?,?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
+	stmt := t.insGuid
 	for _, r := range rows {
 		if _, err := stmt.Exec(r.GUID, r.Path, filepath.Base(r.Path), r.Type); err != nil {
 			return err
@@ -311,7 +388,7 @@ func (t *Tx) AddGuidRows(rows []GuidRow) error {
 // FileID returns the row id of a file inside the transaction, or 0.
 func (t *Tx) FileID(root, relPath string) (int64, error) {
 	var id int64
-	err := t.tx.QueryRow(`SELECT id FROM files WHERE root=? AND path=?`, root, relPath).Scan(&id)
+	err := t.queryRow(`SELECT id FROM files WHERE root=? AND path=?`, root, relPath).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}
@@ -320,7 +397,7 @@ func (t *Tx) FileID(root, relPath string) (int64, error) {
 
 // DeleteFile removes a file and everything derived from it.
 func (t *Tx) DeleteFile(fileID int64, relPath string) error {
-	if _, err := t.tx.Exec(`DELETE FROM edges WHERE src IN (SELECT id FROM symbols WHERE file_id = ?)`, fileID); err != nil {
+	if _, err := t.exec(`DELETE FROM edges WHERE src IN (SELECT id FROM symbols WHERE file_id = ?)`, fileID); err != nil {
 		return err
 	}
 	if _, err := t.delSym.Exec(fileID); err != nil {
@@ -329,7 +406,7 @@ func (t *Tx) DeleteFile(fileID int64, relPath string) error {
 	if _, err := t.delRefs.Exec(fileID); err != nil {
 		return err
 	}
-	if _, err := t.tx.Exec(`DELETE FROM files WHERE id = ?`, fileID); err != nil {
+	if _, err := t.exec(`DELETE FROM files WHERE id = ?`, fileID); err != nil {
 		return err
 	}
 	if relPath != "" {
@@ -346,16 +423,16 @@ func (t *Tx) DeleteFile(fileID int64, relPath string) error {
 // UpsertFile inserts or updates a file record and returns its id.
 func (t *Tx) UpsertFile(f model.FileRec) (int64, error) {
 	var id int64
-	err := t.tx.QueryRow(`SELECT id FROM files WHERE root=? AND path=?`, f.Root, f.Path).Scan(&id)
+	err := t.queryRow(`SELECT id FROM files WHERE root=? AND path=?`, f.Root, f.Path).Scan(&id)
 	if err == nil {
-		_, err = t.tx.Exec(`UPDATE files SET lang=?, module=?, size=?, mtime=? WHERE id=?`,
+		_, err = t.exec(`UPDATE files SET lang=?, module=?, size=?, mtime=? WHERE id=?`,
 			f.Lang, f.Module, f.Size, f.ModTime, id)
 		return id, err
 	}
 	if err != sql.ErrNoRows {
 		return 0, err
 	}
-	res, err := t.tx.Exec(`INSERT INTO files(root, path, lang, module, size, mtime) VALUES(?,?,?,?,?,?)`,
+	res, err := t.exec(`INSERT INTO files(root, path, lang, module, size, mtime) VALUES(?,?,?,?,?,?)`,
 		f.Root, f.Path, f.Lang, f.Module, f.Size, f.ModTime)
 	if err != nil {
 		return 0, err
@@ -365,14 +442,7 @@ func (t *Tx) UpsertFile(f model.FileRec) (int64, error) {
 
 // InsertSymbols inserts symbols in order and returns their ids.
 func (t *Tx) InsertSymbols(fileID int64, syms []model.Symbol) ([]int64, error) {
-	stmt, err := t.tx.Prepare(`INSERT INTO symbols
-		(file_id, root, lang, kind, name, qualname, namespace, parent_id, start_line, end_line,
-		 signature, modifiers, param_count, container, module)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		return nil, err
-	}
-	defer stmt.Close()
+	stmt := t.insSymbol
 	ids := make([]int64, len(syms))
 	for i, s := range syms {
 		res, err := stmt.Exec(fileID, s.Root, s.Lang, s.Kind, s.Name, s.Qualname, s.Namespace,
@@ -481,13 +551,7 @@ func (s *Store) UpdateSymbolParents(root string) error {
 // InsertRefs inserts references with their owning symbol id resolved from the
 // per-file key map.
 func (t *Tx) InsertRefs(fileID int64, refs []model.Ref, keyToID map[string]int64) error {
-	stmt, err := t.tx.Prepare(`INSERT INTO refs
-		(src_id, src_key, file_id, root, name, receiver, receiver_type, kind, namespace_hint, line, arity)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
+	stmt := t.insRef
 	for _, r := range refs {
 		srcID := keyToID[r.SrcKey]
 		if _, err := stmt.Exec(srcID, r.SrcKey, fileID, r.Root, r.Name, r.Receiver, r.ReceiverType,
@@ -510,6 +574,13 @@ func (t *Tx) InsertAssets(assets []model.Asset, line int) error {
 		}
 	}
 	for p := range paths {
+		var n int
+		if err := t.queryRow(`SELECT COUNT(*) FROM assets WHERE path = ?`, p).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			continue
+		}
 		if _, err := t.delAssetEd.Exec(p, p); err != nil {
 			return err
 		}
@@ -517,14 +588,7 @@ func (t *Tx) InsertAssets(assets []model.Asset, line int) error {
 			return err
 		}
 	}
-	stmt, err := t.tx.Prepare(`INSERT INTO assets(asset_key, root, kind, path, name, unity_id, line, meta)
-		VALUES(?,?,?,?,?,?,?,?)
-		ON CONFLICT(asset_key) DO UPDATE SET root=excluded.root, kind=excluded.kind, path=excluded.path,
-		  name=excluded.name, unity_id=excluded.unity_id, line=excluded.line, meta=excluded.meta`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
+	stmt := t.insAsset
 	for _, a := range assets {
 		meta := "{}"
 		if len(a.Meta) > 0 {
@@ -544,11 +608,7 @@ func (t *Tx) InsertAssetEdges(edges []model.AssetEdge) error {
 	if len(edges) == 0 {
 		return nil
 	}
-	stmt, err := t.tx.Prepare(`INSERT OR IGNORE INTO asset_edges(src, dst, kind, line, detail, root) VALUES(?,?,?,?,?,?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
+	stmt := t.insAssetEdge
 	for _, e := range edges {
 		if _, err := stmt.Exec(e.Src, e.Dst, e.Kind, e.Line, e.Detail, e.Root); err != nil {
 			return err
@@ -635,7 +695,11 @@ func (s *Store) LoadRefsPage(afterID int64, limit int) ([]LoadedRef, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]LoadedRef, 0, 4096)
+	capHint := limit
+	if capHint <= 0 || capHint > 65536 {
+		capHint = 65536
+	}
+	out := make([]LoadedRef, 0, capHint)
 	for rows.Next() {
 		var r LoadedRef
 		if err := rows.Scan(&r.ID, &r.SrcID, &r.FileID, &r.Root, &r.Name, &r.ReceiverType, &r.Kind,
