@@ -193,6 +193,8 @@ type LanguagePolicy struct {
 var LanguagePolicies = []LanguagePolicy{
 	{Name: "csharp", Level: "default", Note: "一级支持：类型/成员/调用/引用/继承图 + prefab/shader/配表"},
 	{Name: "go", Level: "optional", Note: "前后端场景可用，需在 languages 中显式开启"},
+	{Name: "rust", Level: "optional", Note: "Rust 模块/trait/impl/调用图，需显式开启"},
+	{Name: "typescript", Level: "optional", Note: "TypeScript/JavaScript class/interface/函数/调用图，需显式开启"},
 	{Name: "lua", Level: "planned", Note: "策略已预留，尚未实现（不会索引）"},
 }
 

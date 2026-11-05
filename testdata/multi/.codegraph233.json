@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "strategy": "auto",
+  "description": "multi-language smoke fixture (C# / Go / Rust / TypeScript)",
+  "roots": [{ "key": "client", "path": ".", "role": "frontend" }],
+  "languages": ["csharp", "go", "rust", "typescript"]
+}

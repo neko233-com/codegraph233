@@ -4,6 +4,7 @@
 # Usage:
 #   ./install.sh                       # install from GitHub (main branch)
 #   ./install.sh --source ~/src/codegraph233
+#   ./install.sh --scope both          # project-level AND user-level MCP configs
 #   ./install.sh --no-mcp
 #   ./install.sh --ref v0.1.0
 set -eu
@@ -13,6 +14,7 @@ SOURCE=""
 REF="main"
 DO_MCP=1
 CLIENTS="codex,cursor,vscode,air,cowork,workbuddy,project"
+SCOPE="project"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -20,6 +22,7 @@ while [ $# -gt 0 ]; do
     --ref) REF="$2"; shift 2 ;;
     --no-mcp) DO_MCP=0; shift ;;
     --clients) CLIENTS="$2"; shift 2 ;;
+    --scope) SCOPE="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,10p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -60,7 +63,7 @@ export PATH="$GOBIN_DIR:$PATH"
 
 if [ "$DO_MCP" -eq 1 ] && [ -f ".codegraph233.json" ]; then
   echo "Registering MCP server for: $CLIENTS"
-  "$BIN" install-mcp --clients "$CLIENTS" --exe "codegraph233" || true
+  "$BIN" install-mcp --clients "$CLIENTS" --exe "codegraph233" --scope "$SCOPE" || true
 fi
 
 echo

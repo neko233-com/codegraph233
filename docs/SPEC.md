@@ -36,6 +36,8 @@
 | --- | --- | --- | --- |
 | C# | **default** | 已实现 | 一级支持：namespace / 嵌套与 partial 类型 / 方法 / 属性 / 字段 / 事件 / 枚举成员；调用、构造、引用、继承；局部变量与字段类型推断；Unity/Tuanjie 资产联动 |
 | Go | optional | 已实现 | 后端场景：包路径跨包解析、receiver/字段类型推断、结构体嵌入（`embeds`）。默认**不开启**，需在 `languages` 显式加入 |
+| Rust | optional | 已实现 | `mod/struct/enum/trait/impl/fn/type/const`；`use` 别名展开、`crate::/self::/super::` 路径、impl 方法归属、trait 实现、`let x: T`/`T::new()` 类型推断 |
+| TypeScript / JavaScript | optional | 已实现 | `class/interface/type/enum/function`、构造与箭头函数、`import` 别名（相对路径解析到模块）、`extends/implements`、`new`/成员调用 |
 | Lua | planned | **未实现** | 仅预留策略位与配置项；当前版本遇到 `.lua` 不索引、不报错，`status` 中标注 planned |
 
 ### 3.2 引擎 / 工程策略
@@ -77,7 +79,10 @@
 - 索引产物：`.codegraph233/`（必须 gitignore，可随时删除重建）。
 - 多根目录：`roots[]`，`role` 只是约定（frontend / backend / shared / assets），后端可空缺。
 - 一键安装：`install.ps1` / `install.sh` → `go install` 到 `$(go env GOPATH)/bin` 并补 PATH。
-- MCP 注册：`codegraph233 install-mcp`，写入 codex / cursor / vscode / air / cowork / workbuddy / 项目根 `.mcp.json`；每条都带 `serve --root <项目>`，因此从后端仓库目录启动也能查同一份图。
+- MCP 注册：`codegraph233 install-mcp --scope project|global|both`。
+  - `project`：写入项目内各客户端配置，条目带 `serve --root <项目>`，锁定本项目；
+  - `global`：写入用户级配置（`~/.codex`、`~/.cursor`、`~/.air`、`~/.codely-cli`、`~/.workbuddy`、VS Code 用户目录），条目为 `serve`，按客户端工作目录自动发现 `.codegraph233.json`；
+  - `both`：两处都写，全局兜底 + 项目精确。
 
 ## 6. 非目标（明确不做）
 
@@ -102,7 +107,7 @@
 ## 8. 演进路线
 
 **P0（已完成，2026-11-05）**
-- C# 语义图、Go 语义图、prefab/scene、shader、配表、多根、引擎识别、SQLite 增量、17 个 MCP 工具、一键全局安装、7 客户端接入。
+- C# / Go / Rust / TypeScript 语义图、prefab/scene、shader、配表、多根、引擎识别、SQLite 增量、17 个 MCP 工具、一键安装、7 客户端接入（项目级 / 全局）。
 
 **P1（下一步）**
 - 增量重绑定：只重算变更文件相关边（当前无改动也要 36s，因为全局 rebind）。

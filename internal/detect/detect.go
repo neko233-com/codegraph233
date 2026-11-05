@@ -138,7 +138,7 @@ func isTuanjieVersion(ver string) bool {
 }
 
 func detectLanguages(dir string) []string {
-	cs, goFiles := 0, 0
+	cs, goFiles, rustFiles, tsFiles := 0, 0, 0, 0
 	var walk func(string, int)
 	walk = func(cur string, depth int) {
 		if depth > 6 || cs+goFiles > 8000 {
@@ -163,6 +163,10 @@ func detectLanguages(dir string) []string {
 				cs++
 			case ".go":
 				goFiles++
+			case ".rs":
+				rustFiles++
+			case ".ts", ".tsx", ".js", ".jsx":
+				tsFiles++
 			}
 		}
 	}
@@ -173,6 +177,12 @@ func detectLanguages(dir string) []string {
 	}
 	if goFiles > 0 {
 		out = append(out, "go")
+	}
+	if rustFiles > 0 {
+		out = append(out, "rust")
+	}
+	if tsFiles > 0 {
+		out = append(out, "typescript")
 	}
 	return out
 }

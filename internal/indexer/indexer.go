@@ -17,6 +17,8 @@ import (
 	"github.com/neko233-com/codegraph233/internal/detect"
 	"github.com/neko233-com/codegraph233/internal/lang/csharp"
 	"github.com/neko233-com/codegraph233/internal/lang/golang"
+	"github.com/neko233-com/codegraph233/internal/lang/rust"
+	"github.com/neko233-com/codegraph233/internal/lang/typescript"
 	"github.com/neko233-com/codegraph233/internal/model"
 	"github.com/neko233-com/codegraph233/internal/store"
 )
@@ -200,7 +202,7 @@ func scanRoots(cfg *config.Config, roots []rootScan, st *store.Store, opts Optio
 					return nil
 				}
 				lang := langOf(rel, p, configDirs, r.Key, prefabsOn, shadersOn, configsOn, cfg)
-				if (lang == "csharp" || lang == "go") && !cfg.LanguageEnabled(lang) {
+				if (lang == "csharp" || lang == "go" || lang == "rust" || lang == "typescript") && !cfg.LanguageEnabled(lang) {
 					// Code languages follow the policy matrix: csharp default, go optional, lua planned.
 					return nil
 				}
@@ -268,6 +270,10 @@ func langOf(rel, abs string, configDirs []string, rootKey string, prefabs, shade
 		return "csharp"
 	case ".go":
 		return "go"
+	case ".rs":
+		return "rust"
+	case ".ts", ".tsx", ".js", ".jsx":
+		return "typescript"
 	case ".prefab", ".unity":
 		if prefabs {
 			return "prefab"
@@ -361,6 +367,18 @@ func parseOne(f scanFile, opts Options) *model.FileResult {
 			relDir = ""
 		}
 		return golang.Parse(f.Rel, f.Root, modulePath, relDir, data)
+	case "rust":
+		data, err := os.ReadFile(f.Abs)
+		if err != nil {
+			return &model.FileResult{RelPath: f.Rel, Root: f.Root, Lang: f.Lang, Errors: []string{err.Error()}}
+		}
+		return rust.Parse(f.Rel, f.Root, data)
+	case "typescript":
+		data, err := os.ReadFile(f.Abs)
+		if err != nil {
+			return &model.FileResult{RelPath: f.Rel, Root: f.Root, Lang: f.Lang, Errors: []string{err.Error()}}
+		}
+		return typescript.Parse(f.Rel, f.Root, data)
 	case "prefab":
 		return assets.ParsePrefab(f.Abs, f.Rel, f.Root)
 	case "shader":

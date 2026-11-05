@@ -95,7 +95,11 @@ func runIndex(args []string) {
 	jobs := fs.Int("jobs", 0, "parallel workers")
 	quiet := fs.Bool("quiet", false, "no progress output")
 	asJSON := fs.Bool("json", false, "print stats as JSON")
+	root := fs.String("root", "", "project root (defaults to cwd / CODEGRAPH233_ROOT)")
 	_ = fs.Parse(args)
+	if *root != "" {
+		os.Setenv("CODEGRAPH233_ROOT", *root)
+	}
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -149,7 +153,11 @@ func runIndex(args []string) {
 func runStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "print JSON")
+	root := fs.String("root", "", "project root (defaults to cwd / CODEGRAPH233_ROOT)")
 	_ = fs.Parse(args)
+	if *root != "" {
+		os.Setenv("CODEGRAPH233_ROOT", *root)
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		fatal(err)
@@ -213,12 +221,16 @@ func runInit(args []string) {
 	if *shared != "" {
 		cfg.Roots = append(cfg.Roots, config.Root{Key: "shared", Path: *shared, Role: "shared"})
 	}
+	// record the detected language set so init-produced configs are ready to use
+	det := detect.Detect(cfg)
+	if len(det.Languages) > 0 {
+		cfg.Languages = det.Languages
+	}
 	if err := config.Save(cfg); err != nil {
 		fatal(err)
 	}
 	ensureGitignore(cwd)
 
-	det := detect.Detect(cfg)
 	fmt.Printf("wrote %s\n", path)
 	fmt.Printf("detected strategy: %s (%s)\n", det.Strategy.Name, det.Strategy.Confidence)
 	for _, r := range det.Roots {
@@ -253,6 +265,7 @@ func ensureGitignore(dir string) {
 func runInstallMCP(args []string) {
 	fs := flag.NewFlagSet("install-mcp", flag.ExitOnError)
 	clients := fs.String("clients", "codex,cursor,vscode,air,cowork,workbuddy,project", "comma separated clients (codex,cursor,vscode,air,cowork,workbuddy,project)")
+	scope := fs.String("scope", "project", "project|global|both")
 	printOnly := fs.Bool("print", false, "print snippets instead of writing files")
 	exe := fs.String("exe", "codegraph233", "command used in MCP configs")
 	_ = fs.Parse(args)
@@ -261,83 +274,158 @@ func runInstallMCP(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	rootDir := cfg.Dir
-	server := map[string]any{
-		"type":    "stdio",
-		"command": *exe,
-		"args":    []string{"serve", "--root", rootDir},
+	projectServer := serverEntry(*exe, []string{"serve", "--root", cfg.Dir})
+	globalServer := serverEntry(*exe, []string{"serve"})
+	targets := mcpTargets(cfg.Dir, *scope, *clients)
+	if len(targets) == 0 {
+		fmt.Fprintln(os.Stderr, "no targets for scope="+*scope)
+		return
 	}
-	vsServer := map[string]any{
-		"type":    "stdio",
-		"command": *exe,
-		"args":    []string{"serve", "--root", rootDir},
-	}
-	for _, raw := range strings.Split(*clients, ",") {
-		client := strings.TrimSpace(strings.ToLower(raw))
-		if client == "" {
-			continue
-		}
-		var target string
-		switch client {
-		case "codex":
-			target = filepath.Join(rootDir, ".codex", "config.toml")
-		case "cursor":
-			target = filepath.Join(rootDir, ".cursor", "mcp.json")
-		case "vscode":
-			target = filepath.Join(rootDir, ".vscode", "mcp.json")
-		case "air":
-			target = filepath.Join(rootDir, ".air", "mcp.json")
-		case "cowork", "codely":
-			target = filepath.Join(rootDir, ".codely-cli", "settings.json")
-		case "workbuddy":
-			target = filepath.Join(rootDir, ".workbuddy", "mcp.json")
-		case "project":
-			target = filepath.Join(rootDir, ".mcp.json")
-		default:
-			fmt.Fprintf(os.Stderr, "skip unknown client %q\n", client)
-			continue
+	for _, target := range targets {
+		server := projectServer
+		if target.global {
+			server = globalServer
 		}
 		if *printOnly {
-			fmt.Printf("# %s (%s)\n%s\n\n", client, target, snippet(client, server, vsServer))
+			fmt.Printf("# %s (%s, %s)\n%s\n\n", target.client, target.path, target.scopeName, snippet(target.client, server))
 			continue
 		}
-		if err := writeClientConfig(client, target, server, vsServer); err != nil {
-			fmt.Fprintf(os.Stderr, "warn: %s: %v\n", client, err)
+		if err := writeClientConfig(target.client, target.path, server); err != nil {
+			fmt.Fprintf(os.Stderr, "warn: %s: %v\n", target.client, err)
 			continue
 		}
-		fmt.Printf("updated %s (%s)\n", target, client)
+		fmt.Printf("updated %s (%s, %s)\n", target.path, target.client, target.scopeName)
 	}
 }
 
-func snippet(client string, server, vsServer map[string]any) string {
+func serverEntry(exe string, args []string) map[string]any {
+	return map[string]any{"type": "stdio", "command": exe, "args": args}
+}
+
+type mcpTarget struct {
+	client      string
+	path        string
+	scopeName   string
+	global      bool
+}
+
+// mcpTargets resolves project-level and user-level config paths per client.
+// Global entries omit --root so the server discovers the config from the
+// client's working directory (project root).
+func mcpTargets(projectDir, scope, clients string) []mcpTarget {
+	home, _ := os.UserHomeDir()
+	var out []mcpTarget
+	for _, raw := range strings.Split(clients, ",") {
+		client := strings.ToLower(strings.TrimSpace(raw))
+		if client == "" {
+			continue
+		}
+		if scope == "project" || scope == "both" {
+			if p := projectConfigPath(client, projectDir); p != "" {
+				out = append(out, mcpTarget{client: client, path: p, scopeName: "project"})
+			}
+		}
+		if scope == "global" || scope == "both" {
+			if p := globalConfigPath(client, home); p != "" {
+				out = append(out, mcpTarget{client: client, path: p, scopeName: "global", global: true})
+			}
+		}
+	}
+	return out
+}
+
+func projectConfigPath(client, dir string) string {
 	switch client {
 	case "codex":
-		return `[mcp_servers.codegraph233]
-command = "` + server["command"].(string) + `"
-args = ["serve", "--root", "` + strings.ReplaceAll(server["args"].([]string)[2], `\`, `\\`) + `"]`
+		return filepath.Join(dir, ".codex", "config.toml")
+	case "cursor":
+		return filepath.Join(dir, ".cursor", "mcp.json")
 	case "vscode":
-		b, _ := json.MarshalIndent(map[string]any{"servers": map[string]any{"codegraph233": vsServer}}, "", "  ")
+		return filepath.Join(dir, ".vscode", "mcp.json")
+	case "air":
+		return filepath.Join(dir, ".air", "mcp.json")
+	case "cowork", "codely":
+		return filepath.Join(dir, ".codely-cli", "settings.json")
+	case "workbuddy":
+		return filepath.Join(dir, ".workbuddy", "mcp.json")
+	case "project":
+		return filepath.Join(dir, ".mcp.json")
+	}
+	return ""
+}
+
+func globalConfigPath(client, home string) string {
+	switch client {
+	case "codex":
+		return filepath.Join(home, ".codex", "config.toml")
+	case "cursor":
+		return filepath.Join(home, ".cursor", "mcp.json")
+	case "vscode":
+		return filepath.Join(vscodeUserDir(home), "mcp.json")
+	case "air":
+		return filepath.Join(home, ".air", "mcp.json")
+	case "cowork", "codely":
+		return filepath.Join(home, ".codely-cli", "settings.json")
+	case "workbuddy":
+		return filepath.Join(home, ".workbuddy", "mcp.json")
+	}
+	return ""
+}
+
+func vscodeUserDir(home string) string {
+	if runtime.GOOS == "windows" {
+		if app := os.Getenv("APPDATA"); app != "" {
+			return filepath.Join(app, "Code", "User")
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "Code", "User")
+	}
+	return filepath.Join(home, ".config", "Code", "User")
+}
+
+func snippet(client string, server map[string]any) string {
+	switch client {
+	case "codex":
+		root := ""
+		args := server["args"].([]string)
+		if len(args) >= 3 {
+			root = args[2]
+		}
+		line := `[mcp_servers.codegraph233]`
+		body := "command = \"" + server["command"].(string) + "\""
+		if root == "" {
+			return line + "\n" + body + "\nargs = [\"serve\"]"
+		}
+		return line + "\n" + body + "\nargs = [\"serve\", \"--root\", \"" + strings.ReplaceAll(root, `\`, `\\`) + "\"]"
+	case "vscode":
+		b, _ := json.MarshalIndent(map[string]any{"servers": map[string]any{"codegraph233": server}}, "", "  ")
 		return string(b)
 	default:
 		b, _ := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{"codegraph233": server}}, "", "  ")
 		return string(b)
 	}
 }
-
-func writeClientConfig(client, path string, server, vsServer map[string]any) error {
+func writeClientConfig(client, path string, server map[string]any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	if client == "codex" {
 		data, _ := os.ReadFile(path)
-		text := stripLegacyToml(string(data))
-		if strings.Contains(text, "[mcp_servers.codegraph233]") {
-			return os.WriteFile(path, []byte(text), 0o644)
+		text := stripTomlSection(stripLegacyToml(string(data)), "codegraph233")
+		args := server["args"].([]string)
+		line := "\n[mcp_servers.codegraph233]\ncommand = \"" + server["command"].(string) + "\"\nargs = ["
+		for i, a := range args {
+			if i > 0 {
+				line += ", "
+			}
+			line += "\"" + strings.ReplaceAll(a, `\`, `\\`) + "\""
 		}
-		root := server["args"].([]string)[2]
-		block := "\n[mcp_servers.codegraph233]\ncommand = \"" + server["command"].(string) +
-			"\"\nargs = [\"serve\", \"--root\", \"" + strings.ReplaceAll(root, `\`, `\\`) + "\"]\n"
-		return os.WriteFile(path, append([]byte(text), []byte(block)...), 0o644)
+		line += "]\n"
+		if text != "" && !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		return os.WriteFile(path, []byte(text+line), 0o644)
 	}
 	existing := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
@@ -356,11 +444,7 @@ func writeClientConfig(client, path string, server, vsServer map[string]any) err
 	}
 	delete(section, "game-project-graph")
 	delete(section, "game_project_graph")
-	if client == "vscode" {
-		section["codegraph233"] = vsServer
-	} else {
-		section["codegraph233"] = server
-	}
+	section["codegraph233"] = server
 	data, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
 		return err
@@ -368,6 +452,27 @@ func writeClientConfig(client, path string, server, vsServer map[string]any) err
 	return os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
+// stripTomlSection removes [mcp_servers.<name>] and its child tables so
+// re-installing (project <-> global) updates args instead of duplicating.
+func stripTomlSection(text, name string) string {
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	skip := false
+	prefix := "[mcp_servers." + name
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "[") {
+			skip = strings.HasPrefix(t, prefix)
+			if skip {
+				continue
+			}
+		}
+		if !skip {
+			out = append(out, line)
+		}
+	}
+	return strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+}
 func writeJSON(v any) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {

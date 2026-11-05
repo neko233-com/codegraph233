@@ -7,12 +7,14 @@
 #   ./install.ps1                      # install from GitHub (main branch)
 #   ./install.ps1 -Source "D:\path\codegraph233"   # install a local checkout
 #   ./install.ps1 -NoMcp               # install binary only
+#   ./install.ps1 -Scope both          # register project-level AND user-level MCP configs
 #   ./install.ps1 -Ref v0.1.0          # pin a tag/branch/commit
 param(
     [string]$Source = "",
     [string]$Ref = "main",
     [switch]$NoMcp,
-    [string]$Clients = "codex,cursor,vscode,air,cowork,workbuddy,project"
+    [string]$Clients = "codex,cursor,vscode,air,cowork,workbuddy,project",
+    [string]$Scope = "project"
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,7 +71,7 @@ if ($LASTEXITCODE -ne 0) { Fail "二进制自检失败" }
 if (-not $NoMcp) {
     if (Test-Path ".codegraph233.json") {
         Write-Host "Registering MCP server for: $Clients"
-        & $exe install-mcp --clients $Clients --exe "codegraph233"
+        & $exe install-mcp --clients $Clients --exe "codegraph233" --scope $Scope
     } else {
         Write-Host "当前目录没有 .codegraph233.json，跳过 MCP 注册。" -ForegroundColor Yellow
         Write-Host "在项目根执行： codegraph233 init && codegraph233 install-mcp"

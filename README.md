@@ -19,7 +19,9 @@
 | 语言 | 级别 | 状态 |
 | --- | --- | --- |
 | **C#** | 默认（default） | 完整支持：符号/调用/引用/继承 + 资产联动 |
-| Go | 可选（optional） | 已实现，需在 `languages` 显式开启（后端场景） |
+| Go | 可选（optional） | 已实现：跨包解析、receiver/字段推断、结构体嵌入；需在 `languages` 显式开启 |
+| Rust | 可选（optional） | 已实现：mod/struct/enum/trait/impl/fn、`use` 别名、调用/构造/实现边 |
+| TypeScript / JavaScript | 可选（optional） | 已实现：class/interface/type/enum/function、import 别名、`new`/调用/继承 |
 | Lua | 预留（planned） | **未实现**，当前不索引 |
 
 | 引擎 | 状态 |
@@ -41,7 +43,21 @@ Linux / macOS / WSL：
 ./install.sh
 ```
 
-脚本会检查 Go（1.24+，推荐 1.27）、`go install` 到 `$(go env GOPATH)/bin`、补 PATH，并在当前项目注册 MCP（codex / cursor / vscode / air / cowork / workbuddy / `.mcp.json`）。
+脚本会检查 Go（1.24+，推荐 1.27）、`go install` 到 `$(go env GOPATH)/bin`、补 PATH，并注册 MCP。
+
+注册范围用 `-Scope` / `--scope` 选择：
+
+| scope | 写到哪里 | 条目形态 |
+| --- | --- | --- |
+| `project`（默认） | 项目内 `.codex` / `.cursor` / `.vscode` / `.air` / `.codely-cli` / `.workbuddy` / `.mcp.json` | `serve --root <项目绝对路径>`，锁定本项目 |
+| `global` | 用户目录 `~/.codex` / `~/.cursor` / `~/.air` / `~/.codely-cli` / `~/.workbuddy`、VS Code 用户目录 | `serve`（不带 root），按客户端工作目录自动发现 `.codegraph233.json` |
+| `both` | 两处都写 | 全局兜底 + 项目精确 |
+
+```powershell
+./install.ps1 -Scope both
+./install.sh --scope both
+codegraph233 install-mcp --scope both --print   # 只看不改
+```
 
 手动：`go install github.com/neko233-com/codegraph233/cmd/codegraph233@main`
 
@@ -69,13 +85,13 @@ codegraph233 install-mcp   # 写各客户端 MCP 配置
     { "key": "client", "path": ".", "role": "frontend" },
     { "key": "server", "path": "../server-project-sf-go", "role": "backend" }
   ],
-  "languages": ["csharp", "go"],
+  "languages": ["csharp", "go", "rust", "typescript"],
   "config_dirs": ["Team-Resources/BusinessConfig"],
   "exclude": ["Assets/Plugins", "_server"]
 }
 ```
 
-* `languages` 省略时默认为 `["csharp"]`；要索引后端 Go 必须显式写 `"go"`。
+* `languages` 省略时默认为 `["csharp"]`；Go / Rust / TypeScript 需显式加入（`init` 会把检测到的语言写进配置）。
 * `strategy`：`auto` | `unity` | `tuanjie` | `ue` | `generic`。
 * `roots` 数量不限，缺失目录只标记 `missing`，不中断。
 * 索引位置：`<project>/.codegraph233/index.db`（SQLite WAL）。
