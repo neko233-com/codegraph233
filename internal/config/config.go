@@ -53,6 +53,8 @@ var DefaultExclude = []string{
 	"node_modules", ".codely-cli", ".codex", ".cursor", ".game-project-graph",
 	"Bundles", "StreamingAssets", "__pycache__", ".vs", ".idea", "DerivedDataCache",
 	"Binaries", "Intermediate", "Saved", ".gradle",
+	// local copies / tool caches that duplicate real sources
+	".local", ".cache", ".venv", "venv", ".tmp",
 }
 
 // Find walks up from start to the first directory containing FileName.
