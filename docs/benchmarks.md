@@ -54,7 +54,7 @@
 | 全量 `index`（冷库，fast 档） | **19–22 s** |
 | 无改动 `index` | **< 10 ms** |
 | 单文件改动（增量重绑定） | **3.7 s** |
-| DB（v2 schema，无 prune） | **394 MB** |
-| DB（`compact` 后） | **371–374 MB**（0.2.0 同库 918 MB） |
+| DB（首个 v3 全量，未 compress） | **426 MB** |
+| DB（`compact` 后） | **384 MB**（0.2.0 同库 918 MB） |
 
 增量重绑定与 `--force` 全量重建逐边一致，由 `cargo test` 中的 `indexer::incremental_rebind_matches_full_rebuild` 固定。
