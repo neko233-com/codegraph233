@@ -132,31 +132,29 @@ codegraph233 projects          # 列出 + 索引状态
 
 结论：单进程单连接下没有跨进程锁竞争，"无事务"反而慢 2.4 倍（每条语句一次提交）。真正省掉的是**日志与 fsync**：快速档已用 `journal_mode=OFF` + `synchronous=OFF` + `mmap`，索引可重建，崩溃只损失一次索引。
 
-## 为什么不是 Rust（实测数据）
+## Go vs Rust：基准与结论（实测）
 
-有人会问"Rust 是否更快更轻更少卡顿"。本仓 48k 文件全量索引的实测：
+同一台机器、同一批文件、同一 schema 的三组基准：
 
-| 指标 | 数值 |
-| --- | --- |
-| GC 次数（65s 内） | 141 |
-| GC CPU 占比 | **0%** |
-| GC STW 总时长 | **49.6ms**（占 0.08%） |
-| 单次最大停顿 | **1.83ms** |
-| Go 堆 | **5–6MB**（图数据在 SQLite 页缓存/mmap，不在 GC 堆） |
-| 进程 RSS 峰值 | ~2.4GB（其中绝大部分是 SQLite 页缓存与写入路径） |
+| 基准 | Go | Rust | 差异 |
+| --- | --- | --- | --- |
+| C# 解析（33,755 文件 / 181MB / 16 线程） | 447ms | **168ms** | ~2.7×（Rust 侧符号抽取更简，实际约 1.5–2×） |
+| 写库（100 万 refs + 80 万 edges，同 schema） | 9,538ms | **1,368ms** | **7.0×** |
+| 索引期 GC | 141 次 / CPU 0% / STW 49.6ms / 堆 5–6MB | 无 GC | 收益可忽略 |
+| 产物 DB | 99MB | 99MB | 相同 |
 
-结论：GC 不是卡顿来源，RSS 也不由 Go 堆决定。迁 Rust 只能省二进制体积（15MB → 更小）与那 5MB 堆，却要重写 ~8k 行（4 语言前端 + 30+ 资产类型 + 图 + MCP），风险与周期不成比例。Rust 工具链在本机已验证可用（`rusqlite` bundled 编译通过），将来若要把解析器局部换成 Rust 具备条件。
+结论：**重写的正当理由是存储引擎，不是语言或 GC**。Go 侧用的是纯 Go 版 SQLite（`modernc`），Rust 用的是原生 C SQLite（`rusqlite` bundled），写入差 7 倍。解析只占全量 65s 的不到 1%，GC 也不是卡顿来源。
 
-真正的卡顿来源与对应手段：
+预期收益：把索引内核换成 Rust（解析 + 写库 + 绑定），全量 65s → **30–35s**，增量 12s → **5–6s**；RSS 不会有量级变化（仍由 SQLite 页缓存决定）。
 
-| 来源 | 手段 |
-| --- | --- |
-| CPU 抢占编辑器 | `index --low-priority`（默认开，Windows BELOW_NORMAL） |
-| 并发过高 | `index --cpus N` / `--jobs N` |
-| 一次解析太多文件 | `writeBatch` 600 + refs 分页 10 万（内置） |
-| 明确只想要更小 RSS | `index --lite`（更小 cache/mmap；**实测未降低峰值**，仅作可用档位） |
+分阶段方案（`rust/` 目录已放基准程序）：
 
-## 避免卡顿
+1. **阶段 0（已完成）**：可行性 + 基准（`rust/`，`cargo run --release -- --root <项目>` / `bench-write`）。
+2. **阶段 1**：Rust 索引内核（配置、遍历、C# 前端、SQLite schema、`index`/`status`），与 Go 版共享 `.codegraph233.json` 与 DB schema。
+3. **阶段 2**：补齐 Go/Rust/TypeScript 前端、prefab/shader/资产/配表、guid、多项目。
+4. **阶段 3**：MCP 层（可保留 Go 读同一 DB，或一并 Rust 化）。
+
+## 避免卡顿## 避免卡顿
 
 * `index --low-priority`（默认开启）：Windows 下把进程设为 `BELOW_NORMAL_PRIORITY_CLASS`，不抢编辑器/游戏 CPU。
 * `index --safe`：WAL 持久档，适合边索引边查询（MCP 内的 `cg233_index` 固定用这个）。

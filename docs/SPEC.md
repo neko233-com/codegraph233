@@ -80,14 +80,16 @@
 * 空间：`codegraph233 compact` 执行 `ANALYZE` + `VACUUM`；本仓实测 1,019MB → 562MB（-45%）。
 * 非目标补充：不追求"崩溃后索引完好"，只保证"索引可无副作用重建"；资产元信息不替代 AssetDatabase 的导入设置。
 
-## 3.6 技术选型：Go 而非 Rust（有数据）
+## 3.6 技术选型：Go vs Rust（实测）
 
-* 实测（48,101 文件、65s 全量）：GC 141 次、**GC CPU 0%**、STW 总计 49.6ms、最大 1.83ms、**Go 堆 5–6MB**。
-* RSS ~2.4GB 主要是 SQLite 页缓存与写入路径，**不由 Go 堆决定**；迁 Rust 不会显著降低 RSS，也不会消除卡顿。
-* 卡顿的实际来源是 CPU/IO 竞争与一帧内解析量，已用低优先级（Windows `BELOW_NORMAL`）、`--cpus/--jobs`、分页与批量提交处理。
-* Rust 工具链可行性已验证（`rusqlite` bundled 通过 MSVC 编译），保留"解析器局部换 Rust"的选项；整体重写不在计划内（成本 ~8k 行、收益仅二进制体积）。
+* C# 解析（33,755 文件）：Go 447ms vs Rust 168ms（Rust 侧抽取更简，实际 1.5–2×）。
+* 写库（100 万 refs + 80 万 edges，同 schema）：Go 9,538ms vs Rust **1,368ms（7.0×）**。
+* 索引期 GC（Go）：141 次、CPU 0%、STW 49.6ms、堆 5–6MB —— GC 不是瓶颈。
+* 差异根因是 SQLite 实现：Go 用 `modernc`（纯 Go），Rust 用 `rusqlite`（原生 C）。
+* 结论：**换 Rust 的收益来自存储引擎**，预期全量 65s → 30–35s。RSS 量级不变。
+* 路线：`rust/` 阶段 0 基准已完成；阶段 1 索引内核（C# + store + index/status）→ 阶段 2 其余前端与资产 → 阶段 3 MCP。
 
-## 4. MCP 契约
+## 4. MCP 契约## 4. MCP 契约
 
 - 传输：stdio，JSON-RPC 2.0；server name `codegraph233`。
 - 工具前缀：`cg233_`。

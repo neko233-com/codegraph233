@@ -49,6 +49,10 @@ func main() {
 		runUnregister(args)
 	case "projects":
 		runProjects(args)
+	case "bench-parse":
+		runBenchParse(args)
+	case "bench-write":
+		runBenchWrite(args)
 	case "version", "--version", "-v":
 		fmt.Println("codegraph233 " + version)
 	case "help", "--help", "-h":
@@ -325,6 +329,51 @@ func ensureGitignore(dir string) {
 // the index stays correct without it, it just gets physically smaller.
 // runRegister adds a project root to the user-level registry so one global MCP
 // process can serve it.
+// runBenchParse parses all C# files and prints timing (no DB writes).  Used to
+// compare front-end cost between implementations.
+// runBenchWrite measures the storage engine by inserting synthetic rows with
+// the same schema the indexer uses (Go: modernc pure-Go SQLite).
+func runBenchWrite(args []string) {
+	fs := flag.NewFlagSet("bench-write", flag.ExitOnError)
+	refs := fs.Int("refs", 1000000, "reference rows")
+	edges := fs.Int("edges", 800000, "edge rows")
+	dir := fs.String("dir", "", "output directory (defaults to Temp)")
+	_ = fs.Parse(args)
+	out := *dir
+	if out == "" {
+		out = filepath.Join(os.TempDir(), "codegraph233-bench")
+	}
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		fatal(err)
+	}
+	res, err := indexer.BenchWrite(out, *refs, *edges)
+	if err != nil {
+		fatal(err)
+	}
+	data, _ := json.Marshal(res)
+	fmt.Println(string(data))
+}
+
+func runBenchParse(args []string) {
+	fs := flag.NewFlagSet("bench-parse", flag.ExitOnError)
+	root := fs.String("root", "", "project root (defaults to cwd / CODEGRAPH233_ROOT)")
+	jobs := fs.Int("jobs", 0, "parallel workers")
+	typeDeps := fs.Bool("type-deps", false, "include type dependency edges")
+	_ = fs.Parse(args)
+	if *root != "" {
+		os.Setenv("CODEGRAPH233_ROOT", *root)
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		fatal(err)
+	}
+	res, err := indexer.BenchParse(cfg, *jobs, *typeDeps)
+	if err != nil {
+		fatal(err)
+	}
+	indexer.PrintBenchJSON(res)
+}
+
 func runRegister(args []string) {
 	fs := flag.NewFlagSet("register", flag.ExitOnError)
 	root := fs.String("root", "", "project root (defaults to cwd)")
