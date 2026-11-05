@@ -40,6 +40,8 @@ type Config struct {
 	Exclude     []string     `json:"exclude,omitempty"`
 	ConfigDirs  []string     `json:"config_dirs,omitempty"`
 	GuidMap     []string     `json:"guid_map,omitempty"`
+	Profile     string       `json:"profile,omitempty"`
+	Features    FeatureSet   `json:"features,omitempty"`
 	Index       IndexOptions `json:"index,omitempty"`
 	Description string       `json:"description,omitempty"`
 
@@ -250,12 +252,19 @@ var LanguagePolicies = []LanguagePolicy{
 	{Name: "lua", Level: "planned", Note: "策略已预留，尚未实现（不会索引）"},
 }
 
-// EffectiveLanguages returns the configured language set; an empty list means
-// the default policy, which is C# only.
+// EffectiveLanguages returns the configured language set.
+//   - empty            -> ["csharp"] (default policy)
+//   - contains "auto"  -> every implemented language (scan decides by extension)
+//   - otherwise        -> the explicit list
 func (c *Config) EffectiveLanguages() []string {
 	langs := c.NormalizeLanguages()
 	if len(langs) == 0 {
 		return []string{"csharp"}
+	}
+	for _, l := range langs {
+		if l == "auto" {
+			return []string{"csharp", "go", "rust", "typescript"}
+		}
 	}
 	return langs
 }

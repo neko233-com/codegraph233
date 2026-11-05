@@ -46,6 +46,48 @@
 默认排除生成/缓存目录：`Library`、`Temp`、`Logs`、`obj`、`Build(s)`、`UserSettings`、`MemoryCaptures`、`Recordings`、`Bundles`、`StreamingAssets`、`LocalPackageCache` 等，以及 `.codely.packages`、`.codely`、`backup`、`_backup`、`备份`、`Documentation~`、`Samples~`、`Tests~`。
 项目可在 `exclude` 追加（本仓追加了美术仓库 `Team-Art-Resources-for-project-sf` 与工具目录 `_Tools` / `_tools`）。
 
+## 按需启用（不为不需要的能力付成本）
+
+`profile` 预设 + `features` 细粒度覆盖，`languages: ["auto"]` 按实际文件启用：
+
+| profile | 索引内容 |
+| --- | --- |
+| `full`（默认） | 代码 + prefab/scene + shader + 资产 + `.meta` + 配表 + guid |
+| `game` | 代码 + prefab/scene + shader + 资产 + 配表 + guid（**不扫 `.meta`**） |
+| `code` | 仅代码（C#/Go/Rust/TS） |
+| `minimal` | 代码 + prefab |
+
+```json
+{
+  "profile": "game",
+  "languages": ["auto"],
+  "features": { "meta": false, "assets": false }
+}
+```
+
+```sh
+codegraph233 index --profile code          # 本次覆盖
+codegraph233 status                        # 显示 profile 与 7 项能力开关
+```
+
+实测（本仓 4 语言夹具）：`--profile code` → 4 文件 / assets=0；`--profile full` → 5 文件 / assets=1。
+没有 TypeScript 的项目写 `languages: ["csharp"]`（或 `auto` 自动探测）就不会为 TS 扫描付任何成本。
+
+## 性能与内存
+
+| 措施 | 效果（本仓 48,101 文件） |
+| --- | --- |
+| 全量 `--force` | **55s**（优化前 108s） |
+| 无改动增量 | **11s**（优化前 38s） |
+| 快速写入档（默认） | `journal_mode=MEMORY` + `synchronous=OFF` + `mmap` + 128MB cache；崩溃只丢索引，可重建 |
+| 持久档 | `index --safe`（WAL + NORMAL），适合边索引边查询 |
+| 绑定并行 | 引用解析按 CPU 并行，分页 10 万条，峰值内存不再随 refs 线性增长 |
+| 只写变化 | 引用目标未变则不写库（162 万 refs 增量更新≈0） |
+| 批量写 | edges 多行 INSERT（400/批）、refs 临时表 `UPDATE ... FROM` |
+| 关闭时 | `wal_checkpoint(TRUNCATE)`（安全档），索引目录不残留大 WAL |
+
+> MCP 内的 `cg233_index` 固定用持久档（服务端持有读连接，避免 journal 切档冲突）。
+
 ## 语言与引擎策略
 
 | 语言 | 级别 | 状态 |
@@ -162,8 +204,8 @@ codegraph233 install-mcp   # 写各客户端 MCP 配置
 | 符号 / 边 | 271k / 702k |
 | 资产 | 40,688（image 6,895 · material 672 · spine 200+199 · audio 321 · font 3 · tmp_font 2 · timeline 120 · asmdef 159 · guid_ref 27k …） |
 | GUID 映射 | 27,720 条；引用覆盖率 4,771 / 4,933 = **96.7%** |
-| 全量 `--force` | ~108s |
-| 无改动增量 | ~40s（引用重绑定仍是全局） |
+| 全量 `--force` | ~55s（快速档；`--safe` 约 108s） |
+| 无改动增量 | ~11s（只写变化的 ref target） |
 | DB | ~1.0GB（WAL 在退出时 TRUNCATE 收敛） |
 | 排除后减少 | 8,580 个美术备份/工具文件 |
 

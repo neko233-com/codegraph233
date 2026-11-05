@@ -137,7 +137,9 @@ func (s *Server) write(resp response) {
 // ensureIndex builds the index on demand.
 func (s *Server) ensureIndex(args map[string]any) error {
 	force := argBool(args, "force", false)
-	stats, err := indexer.Run(s.cfg, indexer.Options{Force: force, Quiet: true, Jobs: argInt(args, "jobs", 0)})
+	stats, err := indexer.Run(s.cfg, indexer.Options{
+		Force: force, Quiet: true, Jobs: argInt(args, "jobs", 0), FastWrite: false,
+	})
 	if err != nil {
 		return err
 	}

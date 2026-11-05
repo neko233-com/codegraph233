@@ -25,10 +25,11 @@ import (
 
 // Options tunes an indexing run.
 type Options struct {
-	Force    bool
-	Jobs     int
-	Quiet    bool
-	Progress func(done, total int, current string)
+	Force     bool
+	Jobs      int
+	Quiet     bool
+	FastWrite bool
+	Progress  func(done, total int, current string)
 }
 
 type scanFile struct {
@@ -59,7 +60,13 @@ func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 	det := detect.Detect(cfg)
 	stats := &model.IndexStats{Roots: len(cfg.Roots), ByLang: map[string]int{}, ByRoot: map[string]int{}}
 
-	st, err := store.Open(cfg.DBPath())
+	var st *store.Store
+	var err error
+	if opts.FastWrite {
+		st, err = store.OpenFast(cfg.DBPath())
+	} else {
+		st, err = store.Open(cfg.DBPath())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +89,13 @@ func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 	}
 
 	// guid -> path mapping (from the Unity/Tuanjie exporter or plaintext .meta)
-	guidRows, guidFiles, gErr := LoadGuidMaps(cfg)
+	feats := cfg.ResolveFeatures()
+	var guidRows []store.GuidRow
+	var guidFiles []string
+	var gErr error
+	if feats.GuidMap {
+		guidRows, guidFiles, gErr = LoadGuidMaps(cfg)
+	}
 	if gErr != nil && !opts.Quiet {
 		fmt.Fprintf(os.Stderr, "[guid] %v\n", gErr)
 	}
@@ -147,7 +160,7 @@ func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 	if !opts.Quiet {
 		fmt.Fprintf(os.Stderr, "[bind] resolving references…\n")
 	}
-	edges, unresolved, err := rebind(st)
+	edges, unresolved, err := rebindIndex(st, opts.Jobs, opts.Quiet)
 	if err != nil {
 		return nil, err
 	}
@@ -185,9 +198,10 @@ func Run(cfg *config.Config, opts Options) (*model.IndexStats, error) {
 
 func scanRoots(cfg *config.Config, roots []rootScan, st *store.Store, opts Options) ([]scanFile, map[string]bool) {
 	excludes := cfg.Excludes()
-	prefabsOn := cfg.Enabled(cfg.Index.Prefabs)
-	shadersOn := cfg.Enabled(cfg.Index.Shaders)
-	configsOn := cfg.Enabled(cfg.Index.ConfigTables)
+	feats := cfg.ResolveFeatures()
+	prefabsOn := feats.Prefabs && cfg.Enabled(cfg.Index.Prefabs)
+	shadersOn := feats.Shaders && cfg.Enabled(cfg.Index.Shaders)
+	configsOn := feats.ConfigTables && cfg.Enabled(cfg.Index.ConfigTables)
 	configDirs := detect.Detect(cfg).ConfigDirs
 
 	var out []scanFile
@@ -218,7 +232,7 @@ func scanRoots(cfg *config.Config, roots []rootScan, st *store.Store, opts Optio
 				if err != nil {
 					return nil
 				}
-				lang := langOf(rel, p, configDirs, r.Key, prefabsOn, shadersOn, configsOn, cfg)
+				lang := langOf(rel, p, configDirs, feats, prefabsOn, shadersOn, configsOn)
 				if (lang == "csharp" || lang == "go" || lang == "rust" || lang == "typescript") && !cfg.LanguageEnabled(lang) {
 					// Code languages follow the policy matrix: csharp default, go optional, lua planned.
 					return nil
@@ -282,35 +296,63 @@ func isExcluded(rel, base string, excludes []string) bool {
 	return false
 }
 
-func langOf(rel, abs string, configDirs []string, rootKey string, prefabs, shaders, configs bool, cfg *config.Config) string {
+func langOf(rel, abs string, configDirs []string, feats config.Features, prefabs, shaders, configs bool) string {
 	ext := strings.ToLower(filepath.Ext(rel))
+
+	// code languages
 	switch ext {
 	case ".cs":
-		return "csharp"
+		if feats.Code {
+			return "csharp"
+		}
+		return ""
 	case ".go":
-		return "go"
+		if feats.Code {
+			return "go"
+		}
+		return ""
 	case ".rs":
-		return "rust"
+		if feats.Code {
+			return "rust"
+		}
+		return ""
 	case ".ts", ".tsx", ".js", ".jsx":
-		return "typescript"
+		if feats.Code {
+			return "typescript"
+		}
+		return ""
+	}
+
+	// game data families
+	switch ext {
 	case ".prefab", ".unity":
 		if prefabs {
 			return "prefab"
 		}
+		return ""
 	case ".shader", ".hlsl", ".cginc", ".compute":
 		if shaders {
 			return "shader"
 		}
+		return ""
 	case ".xlsx", ".csv", ".tsv":
 		if configs {
 			return "config"
 		}
+		return ""
 	case ".json":
 		if configs && isUnderConfigDir(abs, configDirs) {
 			return "config"
 		}
 	}
-	if assets.AssetExt(rel) {
+
+	if ext == ".meta" {
+		if feats.Meta {
+			return "asset"
+		}
+		return ""
+	}
+	if feats.Assets && assets.AssetExt(rel) {
 		return "asset"
 	}
 	return ""
@@ -560,75 +602,6 @@ func itoa(v int) string {
 	return string(b[i:])
 }
 
-// rebind rebuilds all symbol edges from stored references.
-func rebind(st *store.Store) (int, int, error) {
-	t0 := time.Now()
-	if err := st.ClearGraph(); err != nil {
-		return 0, 0, err
-	}
-	syms, err := st.LoadSymbolRows()
-	if err != nil {
-		return 0, 0, err
-	}
-	refs, err := st.LoadRefs()
-	if err != nil {
-		return 0, 0, err
-	}
-	fmt.Fprintf(os.Stderr, "[bind] loaded %d symbols, %d refs (%.1fs)\n", len(syms), len(refs), time.Since(t0).Seconds())
-	if len(syms) == 0 || len(refs) == 0 {
-		return 0, 0, nil
-	}
-	b := newBinder(syms)
-	srcByID := make(map[int64]store.SymbolRow, len(syms))
-	for _, s := range syms {
-		srcByID[s.ID] = s
-	}
-	kindIdx := map[string]int64{}
-	var edges []model.ResolvedEdge
-	seen := map[[3]int64]bool{}
-	unresolved := 0
-	var updates []store.RefTargetUpdate
-	for _, r := range refs {
-		src, ok := srcByID[r.SrcID]
-		if !ok || r.SrcID == 0 {
-			unresolved++
-			continue
-		}
-		res, ok := b.resolve(r, src)
-		if !ok {
-			unresolved++
-			continue
-		}
-		updates = append(updates, store.RefTargetUpdate{ID: r.ID, Target: res.target.ID, Confidence: res.confidence})
-		if res.target.ID == r.SrcID {
-			continue
-		}
-		ki, ok := kindIdx[r.Kind]
-		if !ok {
-			ki = int64(len(kindIdx) + 1)
-			kindIdx[r.Kind] = ki
-		}
-		k := [3]int64{r.SrcID, res.target.ID, ki}
-		if seen[k] {
-			continue
-		}
-		seen[k] = true
-		edges = append(edges, model.ResolvedEdge{
-			Src: r.SrcID, Dst: res.target.ID, Kind: r.Kind, Line: r.Line, Confidence: res.confidence,
-		})
-	}
-	fmt.Fprintf(os.Stderr, "[bind] resolved %d edges, %d unresolved (%.1fs)\n", len(edges), unresolved, time.Since(t0).Seconds())
-	if err := st.UpdateRefTarget(updates); err != nil {
-		return 0, 0, err
-	}
-	fmt.Fprintf(os.Stderr, "[bind] ref targets written (%.1fs)\n", time.Since(t0).Seconds())
-	if err := st.InsertEdges(edges); err != nil {
-		return 0, 0, err
-	}
-	fmt.Fprintf(os.Stderr, "[bind] edges written (%.1fs)\n", time.Since(t0).Seconds())
-	return len(edges), unresolved, nil
-}
-
 // Status reports the index state without modifying it.
 type Status struct {
 	Exists     bool           `json:"exists"`
@@ -648,6 +621,8 @@ type Status struct {
 	GuidEntries int           `json:"guid_map_entries"`
 	GuidRefs    int           `json:"guid_refs"`
 	GuidMapped  int           `json:"guid_refs_mapped"`
+	Profile     string        `json:"profile,omitempty"`
+	Features    config.Features `json:"features"`
 	LanguagePolicy []config.LanguagePolicy `json:"language_policy"`
 }
 
@@ -659,6 +634,8 @@ func ReadStatus(cfg *config.Config) Status {
 		DataDir:    cfg.DataDir(),
 		Detection:  detect.Detect(cfgData),
 		ConfigDirs: detect.Detect(cfgData).ConfigDirs,
+		Profile:    cfgData.Profile,
+		Features:   cfgData.ResolveFeatures(),
 		Languages:  cfgData.EffectiveLanguages(),
 		LanguagePolicy: config.LanguagePolicies,
 	}

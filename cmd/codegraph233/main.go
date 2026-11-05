@@ -96,6 +96,8 @@ func runIndex(args []string) {
 	quiet := fs.Bool("quiet", false, "no progress output")
 	asJSON := fs.Bool("json", false, "print stats as JSON")
 	root := fs.String("root", "", "project root (defaults to cwd / CODEGRAPH233_ROOT)")
+	safe := fs.Bool("safe", false, "use the durable WAL profile instead of the fast in-memory journal")
+	profile := fs.String("profile", "", "override feature profile: full|game|code|minimal")
 	_ = fs.Parse(args)
 	if *root != "" {
 		os.Setenv("CODEGRAPH233_ROOT", *root)
@@ -105,7 +107,10 @@ func runIndex(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	opts := indexer.Options{Force: *force, Jobs: *jobs, Quiet: *quiet}
+	if *profile != "" {
+		cfg.Profile = *profile
+	}
+	opts := indexer.Options{Force: *force, Jobs: *jobs, Quiet: *quiet, FastWrite: !*safe}
 	if !*quiet {
 		last := ""
 		opts.Progress = func(done, total int, cur string) {
@@ -171,6 +176,9 @@ func runStatus(args []string) {
 	fmt.Printf("data:     %s\n", st.DataDir)
 	fmt.Printf("strategy: %s  engine: %s\n", st.Detection.Strategy.Name, st.Detection.Strategy.Engine)
 	fmt.Printf("languages: %v (policy: csharp=default; go/rust/typescript=optional; lua=planned)\n", st.Languages)
+	fmt.Printf("profile:   %s  features: code=%v prefabs=%v shaders=%v assets=%v meta=%v config=%v guid=%v\n",
+		orDefault(st.Profile, "full"), st.Features.Code, st.Features.Prefabs, st.Features.Shaders,
+		st.Features.Assets, st.Features.Meta, st.Features.ConfigTables, st.Features.GuidMap)
 	for _, r := range st.Detection.Roots {
 		state := "ok"
 		if !r.Exists {
@@ -205,6 +213,7 @@ func runInit(args []string) {
 	shared := fs.String("shared", "", "shared root path (optional)")
 	strategy := fs.String("strategy", "auto", "auto|unity|tuanjie|ue|generic")
 	force := fs.Bool("force", false, "overwrite an existing config")
+	profile := fs.String("profile", "full", "feature profile: full|game|code|minimal")
 	_ = fs.Parse(args)
 
 	cwd, err := os.Getwd()
@@ -216,7 +225,7 @@ func runInit(args []string) {
 		fmt.Printf("config already exists: %s (use --force to overwrite)\n", path)
 		return
 	}
-	cfg := &config.Config{Version: 1, Strategy: *strategy, Dir: cwd, FilePath: path}
+	cfg := &config.Config{Version: 1, Strategy: *strategy, Dir: cwd, FilePath: path, Profile: *profile}
 	cfg.Roots = append(cfg.Roots, config.Root{Key: "client", Path: *frontend, Role: "frontend"})
 	if *backend != "" {
 		cfg.Roots = append(cfg.Roots, config.Root{Key: "server", Path: *backend, Role: "backend"})
@@ -487,6 +496,13 @@ func writeJSON(v any) {
 		fatal(err)
 	}
 	fmt.Println(string(data))
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 func truncate(s string, n int) string {

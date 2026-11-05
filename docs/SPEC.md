@@ -66,6 +66,14 @@
 | 配表 | 已实现 | xlsx（每个 sheet 一张表，**自动挑字段名行**）、csv/tsv、json；表头/行数/列数/说明行；读取点与热重载探测 |
 | guid → 路径 | 已实现 | 编辑器导出 TSV（100% 资产，本仓 27,412 条）为主；明文 `.meta`（32 位）自动补充；本仓引用覆盖率 96.7% |
 
+## 3.5 能力开关与性能档
+
+* `profile`: `full` / `game` / `code` / `minimal`；`features` 七项（code、prefabs、shaders、assets、meta、config_tables、guid_map）可逐项覆盖。
+* `languages: ["auto"]` 按实际检测启用；显式列表优先。
+* 写入档：默认快速档（`journal_mode=MEMORY`、`synchronous=OFF`、mmap、128MB cache），索引可重建，崩溃只丢索引；`index --safe` 使用 WAL 持久档。
+* 绑定阶段：分页读取（10 万/页）、按 CPU 并行解析、只写目标发生变化的引用。
+* 非目标补充：不追求"崩溃后索引完好"，只保证"索引可无副作用重建"；资产元信息不替代 AssetDatabase 的导入设置。
+
 ## 4. MCP 契约
 
 - 传输：stdio，JSON-RPC 2.0；server name `codegraph233`。
@@ -107,7 +115,7 @@
 | 维度 | 标准 |
 | --- | --- |
 | 覆盖率 | 抽样 100 个 C# 类型/方法：声明召回 ≥ 95%；调用边召回 ≥ 80%（含 `name` 级） |
-| 索引速度 | 2 万文件全量 ≤ 3 分钟；无改动增量 ≤ 40 秒 |
+| 索引速度 | 4.8 万文件全量 ≤ 90 秒（快速档）；无改动增量 ≤ 20 秒 |
 | 查询延迟 | 单次 `find_symbol` / `file_outline` < 200ms（30 万符号级索引） |
 | 内存 | 全量重建峰值 ≤ 4GB；稳态查询 < 500MB |
 | 稳定性 | 单文件解析失败不影响整批；索引中断后可增量续跑 |

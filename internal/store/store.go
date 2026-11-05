@@ -22,13 +22,25 @@ type Store struct {
 	path string
 }
 
-// Open opens (creating if required) the index database.
-func Open(path string) (*Store, error) {
+// Open opens (creating if required) the index database in the safe (WAL)
+// profile, suitable for concurrent readers.
+func Open(path string) (*Store, error) { return openWith(path, false) }
+
+// OpenFast opens the database for bulk indexing: in-memory journal and
+// synchronous=OFF remove fsync cost.  A crash can lose the index, which is
+// always rebuildable, so callers use this only for write-heavy runs.
+func OpenFast(path string) (*Store, error) { return openWith(path, true) }
+
+func openWith(path string, fast bool) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	dsn := "file:" + filepath.ToSlash(path) +
-		"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(8000)&_pragma=temp_store(MEMORY)&_pragma=cache_size(-32000)"
+	pragmas := "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(8000)&_pragma=temp_store(MEMORY)&_pragma=cache_size(-32000)"
+	if fast {
+		pragmas = "?_pragma=journal_mode(MEMORY)&_pragma=synchronous(OFF)&_pragma=busy_timeout(8000)" +
+			"&_pragma=temp_store(MEMORY)&_pragma=cache_size(-131072)&_pragma=mmap_size(268435456)"
+	}
+	dsn := "file:" + filepath.ToSlash(path) + pragmas
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -560,25 +572,45 @@ type LoadedRef struct {
 	NamespaceHint string
 	Line          int
 	Arity         int
+	Target        int64
 }
 
-// LoadRefs streams every reference row.
-func (s *Store) LoadRefs() ([]LoadedRef, error) {
-	rows, err := s.db.Query(`SELECT id, src_id, file_id, COALESCE(root,''), name,
-		COALESCE(receiver_type,''), kind, COALESCE(namespace_hint,''), COALESCE(line,0), COALESCE(arity,-1) FROM refs`)
+// LoadRefs streams every reference row (kept for small projects / tests).
+func (s *Store) LoadRefs() ([]LoadedRef, error) { return s.LoadRefsPage(0, 0) }
+
+// LoadRefsPage returns at most limit refs with id > afterID, ordered by id.
+// Paging keeps peak memory flat on million-reference projects.
+func (s *Store) LoadRefsPage(afterID int64, limit int) ([]LoadedRef, error) {
+	q := `SELECT id, src_id, file_id, COALESCE(root,''), name, COALESCE(receiver_type,''),
+		kind, COALESCE(namespace_hint,''), COALESCE(line,0), COALESCE(arity,-1), COALESCE(target,0)
+		FROM refs WHERE id > ? ORDER BY id`
+	args := []any{afterID}
+	if limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []LoadedRef
+	out := make([]LoadedRef, 0, 4096)
 	for rows.Next() {
 		var r LoadedRef
-		if err := rows.Scan(&r.ID, &r.SrcID, &r.FileID, &r.Root, &r.Name, &r.ReceiverType, &r.Kind, &r.NamespaceHint, &r.Line, &r.Arity); err != nil {
+		if err := rows.Scan(&r.ID, &r.SrcID, &r.FileID, &r.Root, &r.Name, &r.ReceiverType, &r.Kind,
+			&r.NamespaceHint, &r.Line, &r.Arity, &r.Target); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ClearEdges drops the symbol edge table (refs keep their previous targets so
+// the rebind can skip unchanged rows).
+func (s *Store) ClearEdges() error {
+	_, err := s.db.Exec(`DELETE FROM edges`)
+	return err
 }
 
 // LoadSymbolRows loads the compact symbol table used by the binder.
