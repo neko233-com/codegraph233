@@ -21,7 +21,7 @@ var (
 	reAtlasW   = regexp.MustCompile(`m_AtlasWidth:\s*(\d+)`)
 	reAtlasH   = regexp.MustCompile(`m_AtlasHeight:\s*(\d+)`)
 	reAtlasPop = regexp.MustCompile(`m_AtlasPopulationMode:\s*(\d+)`)
-	reUnicode  = regexp.MustCompile(`(?m)^\s*-\s*m_Unicode:\s*(\d+)`)
+	reUnicode  = regexp.MustCompile(`m_Unicode:\s*\d+`)
 	reGlyph    = regexp.MustCompile(`(?m)^\s*-\s*m_Index:`)
 	reMetaGUID = regexp.MustCompile(`(?m)^guid:\s*([0-9a-fA-F]{32})\s*$`)
 	reMetaFile = regexp.MustCompile(`(?m)^fileFormatVersion:`)
@@ -136,7 +136,9 @@ func ParseAsset(absPath, relPath, root string, maxText int64) *model.FileResult 
 
 	capBytes := maxText
 	if kind == "scriptable_asset" {
-		capBytes = 16 << 20
+		// TMP font atlases routinely exceed 30MB and their character table can
+		// sit near the end of the file.
+		capBytes = 48 << 20
 	}
 	data := readCapped(absPath, capBytes)
 	switch kind {
@@ -265,6 +267,16 @@ func parseMeta(absPath, relPath, root string, res *model.FileResult) *model.File
 }
 
 func readCapped(absPath string, max int64) []byte {
+	st, err := os.Stat(absPath)
+	if err != nil {
+		return nil
+	}
+	if st.Size() < max {
+		max = st.Size()
+	}
+	if max <= 0 {
+		return nil
+	}
 	f, err := os.Open(absPath)
 	if err != nil {
 		return nil
