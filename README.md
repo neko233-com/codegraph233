@@ -20,7 +20,7 @@
 | 增量索引（mtime/size）、prune、并行绑定 | ✅ |
 | CLI：`init` / `index` / `status` / `serve` / `install-mcp` | ✅ |
 | MCP stdio + 14 个工具 | ✅ |
-| 多项目 `project` 参数 | ⏳ 下一步 |
+| 多项目（注册表 `~/.codegraph233/projects.json`、工具 `project` 参数、`cg233_projects`） | ✅ |
 
 ## 安装（全局一次）
 
@@ -91,7 +91,14 @@ RSS 仍由 SQLite 页缓存决定（~2.4GB 量级），换语言不会改变这�
 
 ## MCP 工具
 
-`cg233_status` / `cg233_index` / `cg233_find_symbol` / `cg233_get_symbol` / `cg233_file_outline` / `cg233_find_referencing_symbols` / `cg233_call_graph` / `cg233_impact` / `cg233_search_pattern` / `cg233_asset_search` / `cg233_asset_info` / `cg233_asset_refs` / `cg233_guid_lookup` / `cg233_project_health`
+`cg233_status` / `cg233_index` / `cg233_projects` / `cg233_find_symbol` / `cg233_get_symbol` / `cg233_file_outline` / `cg233_find_referencing_symbols` / `cg233_call_graph` / `cg233_impact` / `cg233_search_pattern` / `cg233_asset_search` / `cg233_asset_info` / `cg233_asset_refs` / `cg233_guid_lookup` / `cg233_project_health`
+
+所有工具都接受可选 `project`（项目名 / 根路径 / 路径片段）。
+
+```sh
+codegraph233 register --root <项目>   # 注册到全局表
+codegraph233 projects                 # 列出 + 索引状态
+```
 
 ## 开发
 

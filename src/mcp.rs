@@ -23,7 +23,7 @@ fn tool(name: &str, desc: &str, props: Value, required: Value) -> Value {
 }
 
 fn tools() -> Vec<Value> {
-    vec![
+    let mut defs = vec![
         tool("cg233_status", "Index status: profile, languages, counts, db path. Call first.", json!({}), json!([])),
         tool("cg233_index", "Build or incrementally update the index (C# front-end in this build).", json!({
             "force": {"type":"boolean","description":"Re-parse every file"},
@@ -66,11 +66,63 @@ fn tools() -> Vec<Value> {
         tool("cg233_guid_lookup", "Resolve a guid or asset path and list its references.", json!({
             "guid": {"type":"string"}, "limit": {"type":"integer"}
         }), json!(["guid"])),
+        tool("cg233_projects", "List registered projects (name, root, indexed, counts) and which is default.", json!({}), json!([])),
         tool("cg233_project_health", "Counts, unresolved refs, guid coverage, db size.", json!({}), json!([])),
-    ]
+    ];
+    for d in defs.iter_mut() {
+        if d["name"] == "cg233_projects" {
+            continue;
+        }
+        if let Some(props) = d["inputSchema"]["properties"].as_object_mut() {
+            props.insert(
+                "project".into(),
+                json!({"type":"string","description":"Optional project name/root (see cg233_projects); defaults to the current project"}),
+            );
+        }
+    }
+    defs
 }
 
-fn call(cfg: &Config, name: &str, args: &Value) -> Result<Value, String> {
+fn call(default_cfg: &Config, name: &str, args: &Value) -> Result<Value, String> {
+    if name == "cg233_projects" {
+        let reg = crate::projects::load();
+        let mut rows: Vec<Value> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let default_dir = default_cfg.dir.to_string_lossy().to_string();
+        for p in &reg.projects {
+            seen.insert(p.root.clone());
+            let cfg = crate::config::load(std::path::Path::new(&p.root)).ok();
+            let st = cfg.as_ref().map(crate::indexer::status);
+            rows.push(json!({
+                "name": p.name, "root": p.root,
+                "default": p.root == default_dir,
+                "indexed": st.as_ref().map(|s| s.exists).unwrap_or(false),
+                "files": st.as_ref().map(|s| s.files).unwrap_or(0),
+                "symbols": st.as_ref().map(|s| s.symbols).unwrap_or(0),
+            }));
+        }
+        if !seen.contains(&default_dir) {
+            let st = crate::indexer::status(default_cfg);
+            rows.push(json!({
+                "name": std::path::Path::new(&default_dir).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+                "root": default_dir, "default": true, "indexed": st.exists,
+                "files": st.files, "symbols": st.symbols,
+            }));
+        }
+        return Ok(json!(rows));
+    }
+
+    let sel = a_str(args, "project");
+    let default_dir = default_cfg.dir.to_string_lossy().to_string();
+    let root = crate::projects::resolve(&default_dir, &sel);
+    let cfg: Config = if root == default_dir {
+        default_cfg.clone()
+    } else {
+        crate::config::load(std::path::Path::new(&root))
+            .map_err(|e| format!("project {root}: {e}"))?
+    };
+    let cfg = &cfg;
+
     if name == "cg233_index" {
         let opts = indexer::Options {
             force: a_bool(args, "force", false),

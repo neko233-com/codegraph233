@@ -7,6 +7,7 @@ mod indexer;
 mod lexer;
 mod mcp;
 mod model;
+mod projects;
 mod query;
 mod rust_lang;
 mod setup;
@@ -138,6 +139,38 @@ fn main() {
                 Err(e) => {
                     eprintln!("error: {e}");
                     std::process::exit(1);
+                }
+            }
+        }
+        "register" => {
+            let dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let target = arg_value(&rest, "--root").map(PathBuf::from).unwrap_or(dir);
+            let mut reg = projects::load();
+            let added = projects::add(&mut reg, &target.to_string_lossy());
+            if let Err(e) = projects::save(&reg) {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+            println!("{} {}", if added { "registered" } else { "already registered" }, target.display());
+        }
+        "unregister" => {
+            let dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let target = arg_value(&rest, "--root").map(PathBuf::from).unwrap_or(dir);
+            let mut reg = projects::load();
+            let removed = projects::remove(&mut reg, &target.to_string_lossy());
+            let _ = projects::save(&reg);
+            println!("{} {}", if removed { "unregistered" } else { "not registered" }, target.display());
+        }
+        "projects" => {
+            let reg = projects::load();
+            if reg.projects.is_empty() {
+                println!("no registered projects; run `codegraph233 register` inside a project");
+            }
+            for p in &reg.projects {
+                let st = config::load(std::path::Path::new(&p.root)).map(|c| indexer::status(&c)).ok();
+                match st {
+                    Some(s) => println!("{:<24} {:<52} files={} symbols={} indexed={}", p.name, p.root, s.files, s.symbols, s.exists),
+                    None => println!("{:<24} {:<52} (config missing)", p.name, p.root),
                 }
             }
         }
