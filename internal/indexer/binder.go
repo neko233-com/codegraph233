@@ -3,8 +3,8 @@ package indexer
 import (
 	"strings"
 
-	"github.com/neko233-com/game-project-graph/internal/model"
-	"github.com/neko233-com/game-project-graph/internal/store"
+	"github.com/neko233-com/codegraph233/internal/model"
+	"github.com/neko233-com/codegraph233/internal/store"
 )
 
 // binder resolves harvested references against the global symbol table.

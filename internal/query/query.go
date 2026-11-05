@@ -12,10 +12,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neko233-com/game-project-graph/internal/config"
-	"github.com/neko233-com/game-project-graph/internal/detect"
-	"github.com/neko233-com/game-project-graph/internal/model"
-	"github.com/neko233-com/game-project-graph/internal/store"
+	"github.com/neko233-com/codegraph233/internal/config"
+	"github.com/neko233-com/codegraph233/internal/detect"
+	"github.com/neko233-com/codegraph233/internal/model"
+	"github.com/neko233-com/codegraph233/internal/store"
 )
 
 // Engine holds an open index for querying.
@@ -27,7 +27,7 @@ type Engine struct {
 // Open opens the index read-only.
 func Open(cfg *config.Config) (*Engine, error) {
 	if _, err := os.Stat(cfg.DBPath()); err != nil {
-		return nil, fmt.Errorf("索引不存在，请先运行 `game-project-graph index`：%w", err)
+		return nil, fmt.Errorf("索引不存在，请先运行 `codegraph233 index`：%w", err)
 	}
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {

@@ -1,4 +1,4 @@
-module github.com/neko233-com/game-project-graph
+module github.com/neko233-com/codegraph233
 
 go 1.24.0
 

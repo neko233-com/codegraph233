@@ -10,9 +10,9 @@ import (
 	"os"
 	"sync"
 
-	"github.com/neko233-com/game-project-graph/internal/config"
-	"github.com/neko233-com/game-project-graph/internal/indexer"
-	"github.com/neko233-com/game-project-graph/internal/query"
+	"github.com/neko233-com/codegraph233/internal/config"
+	"github.com/neko233-com/codegraph233/internal/indexer"
+	"github.com/neko233-com/codegraph233/internal/query"
 )
 
 const serverVersion = "0.1.0"
@@ -48,7 +48,7 @@ type Server struct {
 func Serve(cfg *config.Config, in io.Reader, out io.Writer) error {
 	s := &Server{cfg: cfg, out: bufio.NewWriterSize(out, 1<<20)}
 	defer s.closeEngine()
-	// A missing index is not fatal: gpg_index builds it on demand and other
+	// A missing index is not fatal: cg233_index builds it on demand and other
 	// tools return a clear hint.
 	if eng, err := query.Open(cfg); err == nil {
 		s.eng = eng
@@ -60,7 +60,7 @@ func Serve(cfg *config.Config, in io.Reader, out io.Writer) error {
 			if err == io.EOF {
 				return nil
 			}
-			fmt.Fprintf(os.Stderr, "game-project-graph: decode error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "codegraph233: decode error: %v\n", err)
 			continue
 		}
 		s.handle(req)
@@ -87,10 +87,10 @@ func (s *Server) handle(req request) {
 				"tools": map[string]any{"listChanged": false},
 			},
 			"serverInfo": map[string]any{
-				"name":    "game-project-graph",
+				"name":    "codegraph233",
 				"version": serverVersion,
 			},
-			"instructions": "AST GraphRAG for game projects. Call gpg_status first; build the index with gpg_index (incremental), then use gpg_find_symbol / gpg_call_graph / gpg_asset_* / gpg_config_*.",
+			"instructions": "AST GraphRAG for game projects. Call cg233_status first; build the index with cg233_index (incremental), then use cg233_find_symbol / cg233_call_graph / cg233_asset_* / cg233_config_*.",
 		}})
 	case "ping":
 		s.write(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}})
@@ -156,7 +156,7 @@ func (s *Server) ensureIndex(args map[string]any) error {
 func (s *Server) requireEngine() (*query.Engine, error) {
 	if s.eng == nil {
 		if _, err := os.Stat(s.cfg.DBPath()); err != nil {
-			return nil, fmt.Errorf("索引尚未建立：请先调用 gpg_index（或运行 `game-project-graph index`）")
+			return nil, fmt.Errorf("索引尚未建立：请先调用 cg233_index（或运行 `codegraph233 index`）")
 		}
 		eng, err := query.Open(s.cfg)
 		if err != nil {

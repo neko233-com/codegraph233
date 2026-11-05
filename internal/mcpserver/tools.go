@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/neko233-com/game-project-graph/internal/indexer"
-	"github.com/neko233-com/game-project-graph/internal/query"
+	"github.com/neko233-com/codegraph233/internal/indexer"
+	"github.com/neko233-com/codegraph233/internal/query"
 )
 
 type toolDef struct {
@@ -32,12 +32,12 @@ func boolean(desc string) map[string]any {
 func toolDefs() []toolDef {
 	return []toolDef{
 		{
-			Name: "gpg_status",
+			Name: "cg233_status",
 			Description: "Show index status: detected engine strategy (unity/tuanjie/ue), configured roots, languages, and graph counts. Call this first.",
 			InputSchema: obj(map[string]any{}),
 		},
 		{
-			Name: "gpg_index",
+			Name: "cg233_index",
 			Description: "Build or incrementally update the project graph (C#/Go symbols + calls/refs/inherits, prefabs/scenes, shaders, config tables). Safe to call repeatedly; unchanged files are skipped.",
 			InputSchema: obj(map[string]any{
 				"force": boolean("Rebuild every file instead of using mtime/size fingerprints"),
@@ -45,33 +45,33 @@ func toolDefs() []toolDef {
 			}),
 		},
 		{
-			Name: "gpg_overview",
+			Name: "cg233_overview",
 			Description: "Project-level overview: strategy/engine, roots, languages, symbol kind histogram, top namespaces, asset kinds, config table count and whether config hot reload exists.",
 			InputSchema: obj(map[string]any{}),
 		},
 		{
-			Name: "gpg_find_symbol",
+			Name: "cg233_find_symbol",
 			Description: "Search declarations by name or qualified-name substring. Returns ids usable by the other tools. Prefer this over grepping when locating types, methods, fields or shader functions.",
 			InputSchema: obj(map[string]any{
 				"query": str("Name or qualname substring, e.g. FishChessUnit or GetDataById"),
 				"kind":  str("Optional kind filter: class,struct,interface,enum,method,function,property,field,shader_func,config_table"),
 				"lang":  str("Optional language filter: csharp, go, shader"),
-				"root":  str("Optional root key from gpg_status"),
+				"root":  str("Optional root key from cg233_status"),
 				"path":  str("Optional file path substring"),
 				"limit": num("Max results (default 30)"),
 			}, "query"),
 		},
 		{
-			Name: "gpg_get_symbol",
+			Name: "cg233_get_symbol",
 			Description: "Read one symbol by id, optionally with its numbered source body.",
 			InputSchema: obj(map[string]any{
-				"id":             num("Symbol id from gpg_find_symbol"),
+				"id":             num("Symbol id from cg233_find_symbol"),
 				"include_source": boolean("Include numbered source body (default true)"),
 				"max_lines":      num("Max source lines (default 120)"),
 			}, "id"),
 		},
 		{
-			Name: "gpg_file_outline",
+			Name: "cg233_file_outline",
 			Description: "List declarations in a file (or a group of files matching a path substring) ordered by position.",
 			InputSchema: obj(map[string]any{
 				"path":  str("File path or path substring, e.g. FishChessUnit_Transform.cs"),
@@ -80,7 +80,7 @@ func toolDefs() []toolDef {
 			}, "path"),
 		},
 		{
-			Name: "gpg_find_referencing_symbols",
+			Name: "cg233_find_referencing_symbols",
 			Description: "Who references/calls this symbol (incoming edges with confidence). Mirrors Serena's find_referencing_symbols.",
 			InputSchema: obj(map[string]any{
 				"id":    num("Symbol id"),
@@ -88,7 +88,7 @@ func toolDefs() []toolDef {
 			}, "id"),
 		},
 		{
-			Name: "gpg_call_graph",
+			Name: "cg233_call_graph",
 			Description: "Traverse callers (direction=in) or callees (direction=out) up to N hops. Edge kinds include calls, constructs, references, inherits, implements, embeds.",
 			InputSchema: obj(map[string]any{
 				"id":        num("Symbol id"),
@@ -99,7 +99,7 @@ func toolDefs() []toolDef {
 			}, "id"),
 		},
 		{
-			Name: "gpg_symbol_path",
+			Name: "cg233_symbol_path",
 			Description: "Find the shortest directed call/construct path between two symbols.",
 			InputSchema: obj(map[string]any{
 				"from":      num("Start symbol id"),
@@ -108,7 +108,7 @@ func toolDefs() []toolDef {
 			}, "from", "to"),
 		},
 		{
-			Name: "gpg_impact",
+			Name: "cg233_impact",
 			Description: "Change-impact analysis: incoming references for a symbol or for the first symbol in a file, plus affected files. Use before refactors.",
 			InputSchema: obj(map[string]any{
 				"id":    num("Symbol id (preferred)"),
@@ -117,7 +117,7 @@ func toolDefs() []toolDef {
 			}),
 		},
 		{
-			Name: "gpg_search_pattern",
+			Name: "cg233_search_pattern",
 			Description: "Regex search across indexed files with optional context lines. Use when the AST graph does not model a construct (strings, YAML, config text).",
 			InputSchema: obj(map[string]any{
 				"pattern":       str("Go RE2 regular expression"),
@@ -128,7 +128,7 @@ func toolDefs() []toolDef {
 			}, "pattern"),
 		},
 		{
-			Name: "gpg_asset_search",
+			Name: "cg233_asset_search",
 			Description: "Search prefab/scene objects, shaders, shader passes/properties and config tables by name, path or kind.",
 			InputSchema: obj(map[string]any{
 				"name":  str("Name or asset key substring"),
@@ -139,7 +139,7 @@ func toolDefs() []toolDef {
 			}),
 		},
 		{
-			Name: "gpg_asset_tree",
+			Name: "cg233_asset_tree",
 			Description: "Show a prefab/scene hierarchy (GameObjects and contains edges) for a path substring.",
 			InputSchema: obj(map[string]any{
 				"path":  str("Prefab/scene path substring, e.g. W2D_FishingBattle.prefab"),
@@ -148,23 +148,23 @@ func toolDefs() []toolDef {
 			}, "path"),
 		},
 		{
-			Name: "gpg_asset_refs",
+			Name: "cg233_asset_refs",
 			Description: "List asset relationships (instantiates / uses_script / references / includes / declares) for an exact asset key, in or out.",
 			InputSchema: obj(map[string]any{
-				"key":       str("Exact asset key from gpg_asset_search"),
+				"key":       str("Exact asset key from cg233_asset_search"),
 				"direction": str("out (default) or in"),
 				"limit":     num("Default 200"),
 			}, "key"),
 		},
 		{
-			Name: "gpg_shader_info",
+			Name: "cg233_shader_info",
 			Description: "ShaderLab summary: shader name, properties, passes, includes and multi_compile keywords.",
 			InputSchema: obj(map[string]any{
 				"path": str("Shader path substring"),
 			}, "path"),
 		},
 		{
-			Name: "gpg_config_tables",
+			Name: "cg233_config_tables",
 			Description: "List detected business config tables (xlsx sheets / csv / tsv / json) with headers, row counts and source paths. Format is auto-detected, not hardcoded.",
 			InputSchema: obj(map[string]any{
 				"filter": str("Optional table/sheet name substring"),
@@ -173,7 +173,7 @@ func toolDefs() []toolDef {
 			}),
 		},
 		{
-			Name: "gpg_config_readers",
+			Name: "cg233_config_readers",
 			Description: "List code locations that read configuration and report whether the project has config hot reload (detected by symbols such as ConfigHotReloadManager/ReloadConfig).",
 			InputSchema: obj(map[string]any{
 				"table": str("Optional table name for context"),
@@ -185,18 +185,18 @@ func toolDefs() []toolDef {
 
 func (s *Server) call(name string, args map[string]any) (string, error) {
 	switch name {
-	case "gpg_status":
+	case "cg233_status":
 		st := indexer.ReadStatus(s.cfg)
 		return toJSON(st)
 
-	case "gpg_index":
+	case "cg233_index":
 		if err := s.ensureIndex(args); err != nil {
 			return "", err
 		}
 		st := indexer.ReadStatus(s.cfg)
 		return toJSON(st)
 
-	case "gpg_overview":
+	case "cg233_overview":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -207,7 +207,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(o)
 
-	case "gpg_find_symbol":
+	case "cg233_find_symbol":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -221,7 +221,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(hits)
 
-	case "gpg_get_symbol":
+	case "cg233_get_symbol":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -239,7 +239,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(res)
 
-	case "gpg_file_outline":
+	case "cg233_file_outline":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -250,7 +250,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(hits)
 
-	case "gpg_find_referencing_symbols":
+	case "cg233_find_referencing_symbols":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -261,7 +261,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(hits)
 
-	case "gpg_call_graph":
+	case "cg233_call_graph":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -274,7 +274,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(hits)
 
-	case "gpg_symbol_path":
+	case "cg233_symbol_path":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -285,7 +285,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(steps)
 
-	case "gpg_impact":
+	case "cg233_impact":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -296,7 +296,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(imp)
 
-	case "gpg_search_pattern":
+	case "cg233_search_pattern":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -309,7 +309,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(hits)
 
-	case "gpg_asset_search":
+	case "cg233_asset_search":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -322,7 +322,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(hits)
 
-	case "gpg_asset_tree":
+	case "cg233_asset_tree":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -333,7 +333,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(map[string]any{"objects": objs, "edges": edges})
 
-	case "gpg_asset_refs":
+	case "cg233_asset_refs":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -344,7 +344,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(hits)
 
-	case "gpg_shader_info":
+	case "cg233_shader_info":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -376,7 +376,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 			"includes": includes, "keywords": shader.Meta["keywords"],
 		})
 
-	case "gpg_config_tables":
+	case "cg233_config_tables":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err
@@ -387,7 +387,7 @@ func (s *Server) call(name string, args map[string]any) (string, error) {
 		}
 		return toJSON(tables)
 
-	case "gpg_config_readers":
+	case "cg233_config_readers":
 		eng, err := s.requireEngine()
 		if err != nil {
 			return "", err

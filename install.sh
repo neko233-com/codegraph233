@@ -1,14 +1,14 @@
 #!/usr/bin/env sh
-# game-project-graph installer (Linux / macOS / WSL)
+# codegraph233 installer (Linux / macOS / WSL)
 #
 # Usage:
 #   ./install.sh                       # install from GitHub (main branch)
-#   ./install.sh --source ~/src/game-project-graph
+#   ./install.sh --source ~/src/codegraph233
 #   ./install.sh --no-mcp
 #   ./install.sh --ref v0.1.0
 set -eu
 
-MODULE="github.com/neko233-com/game-project-graph"
+MODULE="github.com/neko233-com/codegraph233"
 SOURCE=""
 REF="main"
 DO_MCP=1
@@ -35,17 +35,17 @@ echo "Go detected: $(go version)"
 if [ -n "$SOURCE" ]; then
   [ -f "$SOURCE/go.mod" ] || { echo "ERROR: $SOURCE has no go.mod" >&2; exit 1; }
   echo "Installing from local source: $SOURCE"
-  ( cd "$SOURCE" && go install "./cmd/game-project-graph" )
+  ( cd "$SOURCE" && go install "./cmd/codegraph233" )
 else
-  echo "Installing $MODULE/cmd/game-project-graph@$REF ..."
-  go install "$MODULE/cmd/game-project-graph@$REF"
+  echo "Installing $MODULE/cmd/codegraph233@$REF ..."
+  go install "$MODULE/cmd/codegraph233@$REF"
 fi
 
 GOBIN_DIR="$(go env GOBIN)"
 if [ -z "$GOBIN_DIR" ]; then
   GOBIN_DIR="$(go env GOPATH)/bin"
 fi
-BIN="$GOBIN_DIR/game-project-graph"
+BIN="$GOBIN_DIR/codegraph233"
 [ -x "$BIN" ] || { echo "ERROR: expected binary at $BIN" >&2; exit 1; }
 
 case ":$PATH:" in
@@ -58,13 +58,13 @@ export PATH="$GOBIN_DIR:$PATH"
 
 "$BIN" version
 
-if [ "$DO_MCP" -eq 1 ] && [ -f ".game-project-graph.json" ]; then
+if [ "$DO_MCP" -eq 1 ] && [ -f ".codegraph233.json" ]; then
   echo "Registering MCP server for: $CLIENTS"
-  "$BIN" install-mcp --clients "$CLIENTS" --exe "game-project-graph" || true
+  "$BIN" install-mcp --clients "$CLIENTS" --exe "codegraph233" || true
 fi
 
 echo
 echo "Done. Next steps:"
-echo "  game-project-graph init      # write .game-project-graph.json (auto-detects engine + roots)"
-echo "  game-project-graph index     # build/update the index"
-echo "  game-project-graph status    # show detection and counts"
+echo "  codegraph233 init      # write .codegraph233.json (auto-detects engine + roots)"
+echo "  codegraph233 index     # build/update the index"
+echo "  codegraph233 status    # show detection and counts"

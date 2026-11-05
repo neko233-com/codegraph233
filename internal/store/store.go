@@ -13,7 +13,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/neko233-com/game-project-graph/internal/model"
+	"github.com/neko233-com/codegraph233/internal/model"
 )
 
 // Store wraps the index database.

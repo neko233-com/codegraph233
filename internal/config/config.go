@@ -1,4 +1,4 @@
-// Package config loads .game-project-graph.json and resolves multi-root layouts.
+// Package config loads .codegraph233.json and resolves multi-root layouts.
 package config
 
 import (
@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const FileName = ".game-project-graph.json"
+const FileName = ".codegraph233.json"
 
 // Root is one indexed directory.  Frontend and backend are both optional: an
 // empty or missing path is reported as "missing" instead of failing the run.
@@ -50,7 +50,7 @@ type Config struct {
 // DefaultExclude contains heavy generated directories for game projects.
 var DefaultExclude = []string{
 	".git", ".svn", ".hg", "Library", "Temp", "Logs", "obj", "Build", "Builds",
-	"node_modules", ".codely-cli", ".codex", ".cursor", ".game-project-graph",
+	"node_modules", ".codely-cli", ".codex", ".cursor", ".codegraph233",
 	"Bundles", "StreamingAssets", "__pycache__", ".vs", ".idea", "DerivedDataCache",
 	"Binaries", "Intermediate", "Saved", ".gradle",
 	// local copies / tool caches that duplicate real sources
@@ -79,7 +79,7 @@ func Find(start string) (string, bool) {
 // minimal single-root "current directory" config so that the index can run
 // before `init` is executed.
 func Load(start string) (*Config, error) {
-	if env := os.Getenv("GAME_PROJECT_GRAPH_ROOT"); env != "" {
+	if env := os.Getenv("CODEGRAPH233_ROOT"); env != "" {
 		start = env
 	}
 	dir, ok := Find(start)
@@ -134,7 +134,7 @@ func Save(cfg *Config) error {
 
 // DataDir is where the index and derived data live (git-ignored).
 func (c *Config) DataDir() string {
-	return filepath.Join(c.Dir, ".game-project-graph")
+	return filepath.Join(c.Dir, ".codegraph233")
 }
 
 // DBPath is the SQLite index file.
@@ -180,13 +180,42 @@ func (c *Config) NormalizeLanguages() []string {
 	return out
 }
 
-// LanguageEnabled reports whether a language was restricted away.
-func (c *Config) LanguageEnabled(lang string) bool {
+// LanguagePolicy documents the support level of a language front-end.
+type LanguagePolicy struct {
+	Name  string `json:"name"`
+	Level string `json:"level"` // default | optional | planned
+	Note  string `json:"note"`
+}
+
+// LanguagePolicies is the committed policy matrix.  C# is the default and fully
+// supported front-end; Go covers the backend scenario when explicitly enabled;
+// Lua is a reserved strategy and is not implemented yet.
+var LanguagePolicies = []LanguagePolicy{
+	{Name: "csharp", Level: "default", Note: "一级支持：类型/成员/调用/引用/继承图 + prefab/shader/配表"},
+	{Name: "go", Level: "optional", Note: "前后端场景可用，需在 languages 中显式开启"},
+	{Name: "lua", Level: "planned", Note: "策略已预留，尚未实现（不会索引）"},
+}
+
+// EffectiveLanguages returns the configured language set; an empty list means
+// the default policy, which is C# only.
+func (c *Config) EffectiveLanguages() []string {
 	langs := c.NormalizeLanguages()
 	if len(langs) == 0 {
-		return true
+		return []string{"csharp"}
 	}
-	for _, l := range langs {
+	return langs
+}
+
+// LanguageEnabled reports whether a code language should be indexed.  Languages
+// whose support level is "planned" are always rejected.
+func (c *Config) LanguageEnabled(lang string) bool {
+	lang = strings.ToLower(strings.TrimSpace(lang))
+	for _, p := range LanguagePolicies {
+		if p.Name == lang && p.Level == "planned" {
+			return false
+		}
+	}
+	for _, l := range c.EffectiveLanguages() {
 		if l == lang {
 			return true
 		}

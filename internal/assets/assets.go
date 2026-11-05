@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neko233-com/game-project-graph/internal/model"
+	"github.com/neko233-com/codegraph233/internal/model"
 )
 
 var (

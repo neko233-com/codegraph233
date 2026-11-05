@@ -1,78 +1,65 @@
-# game-project-graph
+# codegraph233
 
-**AST GraphRAG MCP server for game projects.** One index for the client (Unity / Tuanjie / UE-ready) and the backend (Go), plus the game-specific data that generic code-graph tools cannot see: **prefabs/scenes, shaders and business config tables**.
+**Serena 的符号级工具 + Graphify 的图检索 + 对游戏工程的深度支持。**
 
-It is inspired by Serena's symbol-level tooling and CodeGraph's graph queries, but targets game repositories:
+一个 MCP server，把「客户端 C# + 服务端 Go + prefab/shader/业务配表」索引成一张可查询的图。通用代码图工具看不懂游戏项目里占工作量一半的资产与配表，codegraph233 补上这一块。
 
-| Capability | codegraph / Serena | game-project-graph |
+规范（目的、策略、非目标、验收）见 **[docs/SPEC.md](docs/SPEC.md)**。
+
+## 能力
+
+| 能力域 | 内容 |
+| --- | --- |
+| 代码语义图 | 跨文件类型/成员/调用/构造/引用/继承，边带 `exact` / `type` / `name` 置信度；Go 后端跨包解析与结构体嵌入 |
+| 游戏数据图 | prefab/scene 的 GameObject 层级、`m_Script`、嵌套 prefab、资源 guid；ShaderLab 的 property/pass/include/keyword；配表的表头/行数/读取点/热重载 |
+| 工程识别 | 自动判断团结（`t` 补丁号）/ Unity / UE（仅识别），多根目录（前端 + 后端，后端可空缺） |
+
+## 语言与引擎策略
+
+| 语言 | 级别 | 状态 |
 | --- | --- | --- |
-| C# symbols / calls / inheritance | partial | ✅ cross-file, overload-aware |
-| Go symbols / calls / interface embedding | partial | ✅ standard-library AST |
-| Multi-root (frontend + backend, backend optional) | ❌ | ✅ `.game-project-graph.json` |
-| Engine auto-detection (Unity / Tuanjie / UE) | ❌ | ✅ reads `ProjectVersion.txt`, `.uproject` |
-| Prefab / scene hierarchy + script & asset refs | ❌ | ✅ Unity/Tuanjie YAML |
-| ShaderLab properties / passes / includes / keywords | ❌ | ✅ |
-| Business config tables (xlsx/csv/tsv/json, auto format) | ❌ | ✅ + hot-reload detection |
-| Change impact / call paths / reference confidence | partial | ✅ |
+| **C#** | 默认（default） | 完整支持：符号/调用/引用/继承 + 资产联动 |
+| Go | 可选（optional） | 已实现，需在 `languages` 显式开启（后端场景） |
+| Lua | 预留（planned） | **未实现**，当前不索引 |
 
-## Install (one command, global)
+| 引擎 | 状态 |
+| --- | --- |
+| 团结引擎 / Unity | 已实现（自动识别，资产层分别处理明文/加密 guid） |
+| UE | 仅识别项目，图未实现 |
 
-Windows (PowerShell 7+):
+## 安装（一键全局）
+
+Windows：
 
 ```powershell
 ./install.ps1
 ```
 
-Linux / macOS / WSL:
+Linux / macOS / WSL：
 
 ```sh
 ./install.sh
 ```
 
-Both scripts:
+脚本会检查 Go（1.24+，推荐 1.27）、`go install` 到 `$(go env GOPATH)/bin`、补 PATH，并在当前项目注册 MCP（codex / cursor / vscode / air / cowork / workbuddy / `.mcp.json`）。
 
-1. verify Go (1.24+, 1.27 recommended),
-2. `go install` the binary into `$(go env GOPATH)/bin` (i.e. global),
-3. make sure that directory is on `PATH`,
-4. optionally register the MCP server in the current project.
+手动：`go install github.com/neko233-com/codegraph233/cmd/codegraph233@main`
 
-Options: `-Source <local checkout>`, `-Ref <tag|branch>`, `-NoMcp`, `-Clients codex,cursor,vscode,air,cowork,workbuddy,project`.
-
-`install-mcp` writes the server entry into the project-level config of each client:
-
-| client | file |
-| --- | --- |
-| codex | `.codex/config.toml` (`[mcp_servers.game_project_graph]`) |
-| cursor | `.cursor/mcp.json` (`mcpServers`) |
-| vscode | `.vscode/mcp.json` (`servers`) |
-| air | `.air/mcp.json` (`mcpServers`) |
-| cowork | `.codely-cli/settings.json` (`mcpServers`) |
-| workbuddy | `.workbuddy/mcp.json` (`mcpServers`) |
-| project | `.mcp.json` (generic MCP entry point) |
-
-Each entry pins `--root <project>` so the server works no matter which root directory the client is opened from (e.g. the Go backend repo).
-
-Manual install:
+## 快速开始
 
 ```sh
-go install github.com/neko233-com/game-project-graph/cmd/game-project-graph@main
+cd <game-project>
+codegraph233 init          # 写 .codegraph233.json（自动识别引擎/语言/后端目录）
+codegraph233 index         # 全量索引，之后增量
+codegraph233 status        # 识别结果 + 策略矩阵 + 统计
+codegraph233 install-mcp   # 写各客户端 MCP 配置
 ```
 
-## Quick start
+`init` 会把 `/.codegraph233/` 追加进 `.gitignore`；索引是本地状态，不入库。
 
-```sh
-cd <your-game-project>
-game-project-graph init          # writes .game-project-graph.json, auto-detects engine/languages
-game-project-graph index         # full index (incremental afterwards)
-game-project-graph status        # detection + counts
-game-project-graph install-mcp   # add the MCP entry to Codex/Cursor/VS Code/Air/Cowork
-```
+## 配置
 
-`init` appends `/.game-project-graph/` to `.gitignore`; the index is local state and must not be committed.
-
-## Config
-
-`.game-project-graph.json` (committed):
+`.codegraph233.json`（提交）：
 
 ```json
 {
@@ -88,86 +75,61 @@ game-project-graph install-mcp   # add the MCP entry to Codex/Cursor/VS Code/Air
 }
 ```
 
-* `strategy`: `auto` | `unity` | `tuanjie` | `ue` | `generic`. `auto` reads `ProjectSettings/ProjectVersion.txt`; a Tuanjie build has a `t` patch level (`2022.3.62t17`), Unity has `f`/`a`/`b`/`p`.
-* `roots`: any number. Frontend/backend/shared are conventions, not requirements; a missing path is reported as `missing` and does not fail the run.
-* `config_dirs`: extra config-table roots (absolute or relative to the config file).
-* `exclude`: directory names or root-relative prefixes.
+* `languages` 省略时默认为 `["csharp"]`；要索引后端 Go 必须显式写 `"go"`。
+* `strategy`：`auto` | `unity` | `tuanjie` | `ue` | `generic`。
+* `roots` 数量不限，缺失目录只标记 `missing`，不中断。
+* 索引位置：`<project>/.codegraph233/index.db`（SQLite WAL）。
 
-Index location: `<project>/.game-project-graph/index.db` (SQLite, WAL).
+## MCP 工具
 
-## MCP tools
-
-| Tool | Purpose |
+| 工具 | 用途 |
 | --- | --- |
-| `gpg_status` | detection, roots, languages, index counts |
-| `gpg_index` | build/update (incremental; `force`, `jobs`) |
-| `gpg_overview` | strategy, histogram, top namespaces, asset kinds, config/hot-reload summary |
-| `gpg_find_symbol` | find types/methods/fields/shader functions by name or qualname |
-| `gpg_get_symbol` | symbol + numbered source body |
-| `gpg_file_outline` | declarations of a file |
-| `gpg_find_referencing_symbols` | incoming references (Serena parity) |
-| `gpg_call_graph` | callers/callees, multi-hop |
-| `gpg_symbol_path` | shortest call path between two symbols |
-| `gpg_impact` | change-impact set and affected files |
-| `gpg_search_pattern` | regex search with context (for unmodelled constructs) |
-| `gpg_asset_search` | prefab/scene objects, shaders, config tables |
-| `gpg_asset_tree` | prefab/scene GameObject hierarchy |
-| `gpg_asset_refs` | instantiates / uses_script / references / includes |
-| `gpg_shader_info` | properties, passes, includes, keywords |
-| `gpg_config_tables` | detected tables with headers/rows/source |
-| `gpg_config_readers` | config read sites + hot-reload capability |
+| `cg233_status` | 识别结果、策略矩阵、索引统计 |
+| `cg233_index` | 建立/增量更新（`force`、`jobs`） |
+| `cg233_overview` | 项目概览：策略、类型直方图、顶层命名空间、资产种类、配表与热重载 |
+| `cg233_find_symbol` | 按名字/限定名查类型、方法、字段、shader 函数 |
+| `cg233_get_symbol` | 符号详情 + 带行号源码 |
+| `cg233_file_outline` | 文件结构 |
+| `cg233_find_referencing_symbols` | 谁引用/调用了它（对标 Serena） |
+| `cg233_call_graph` | 调用者/被调用者，多跳 |
+| `cg233_symbol_path` | 两符号间最短调用路径 |
+| `cg233_impact` | 改动影响面（类型会聚合其成员） |
+| `cg233_search_pattern` | 正则检索 + 上下文（补图未覆盖的语法） |
+| `cg233_asset_search` | prefab/scene 对象、shader、配表 |
+| `cg233_asset_tree` | prefab/scene 层级 |
+| `cg233_asset_refs` | instantiates / uses_script / references / includes |
+| `cg233_shader_info` | properties、pass、include、keyword |
+| `cg233_config_tables` | 配表清单（表头/行数/来源） |
+| `cg233_config_readers` | 读取点 + 是否支持热重载 |
 
-All tools return JSON. Symbol ids are stable within one index build.
+## 性能（实测）
 
-## Strategies
-
-**tuanjie / unity.** C# is indexed with a tolerant declaration scanner (namespaces, nested/partial types, methods, properties, fields, events, enum members, calls, constructs, inheritance). Prefabs and scenes are parsed from their YAML: GameObject hierarchy, `m_Script` GUIDs, nested prefabs, asset references.
-
-> Tuanjie stores encrypted GUIDs in `.meta`, so a prefab GUID cannot be mapped back to an asset path without the editor. The graph keeps GUID relationships (and therefore duplicate/shared-reference analysis) but does not resolve GUID→path. Unity projects have plaintext GUIDs and can be resolved later.
-
-**ue (reserved).** Projects are recognized (`.uproject` / `Content/*.uasset`) and reported, but C++/Blueprint/asset graphs are not implemented yet.
-
-**generic.** Any repo with C#/Go works; prefab/shader/config stages simply find nothing.
-
-## Config tables
-
-Format is auto-detected, not hardcoded:
-
-* `.xlsx` — one table per sheet (headers, row count), streamed, column-capped to avoid dirty-column blowups;
-* `.csv` / `.tsv` — header + row count;
-* `.json` — array/object shape (rows, header keys).
-
-`gpg_config_readers` reports code that reads config (`GetDataById`, `ConfigManager`, `GetConfig`, …) and whether a hot-reload implementation exists (`ConfigHotReloadManager`, `ReloadConfig`, `Config233AutoExportWatcher`, …).
-
-## Performance (measured)
-
-Real project, client + backend in one index (`Assets/**` + Go service):
+客户端 + 后端一个索引（`Assets/**` + Go 服务）：
 
 | | |
 | --- | --- |
-| files | 23,386 (C# 13,261 · Go 5,847 · prefab/scene 1,196 · shader 403 · config 2,715) |
-| symbols | 368k |
-| edges | 1.20M |
-| assets | 24.8k (prefab objects, shader passes/properties, config tables) |
-| full `--force` index | ~100 s |
-| incremental (no file change) | ~36 s (reference rebind is global) |
-| DB size | ~1 GB for this project |
+| 文件 | 23,386（C# 13,261 · Go 5,847 · prefab/scene 1,196 · shader 403 · config 2,715） |
+| 符号 / 边 | 368k / 1.20M |
+| 资产 | 24.8k（prefab 对象、shader pass/property、配表） |
+| 全量 `--force` | ~100s |
+| 无改动增量 | ~36s（引用重绑定仍是全局） |
+| DB | ~1.0GB |
 
-Parsing is parallel (CPU-count workers); writes run in bounded batches so peak memory stays flat (about 3 GB during a full rebuild of 23k files, then down to a few hundred MB).
+解析按 CPU 并行，写库分批，峰值内存约 3GB（23k 文件全量重建）。
 
-## Notes / limits
+## 已知限制
 
-* The C# front-end is a scanner, not a compiler: it resolves local variables, parameters, fields and obvious static receivers; remaining references are reported with `confidence: name` / `name-multi`.
-* Go uses `go/parser`; cross-package resolution goes through import paths. Interface satisfaction is represented by `embeds`/`implements` edges from declarations, not by full method-set analysis.
-* Large generated folders must be excluded; indexing is CPU-bound and parallel (`--jobs`).
-* `game-project-graph index --force` re-parses everything and is the escape hatch when the graph looks stale.
+* C# 前端是扫描器而非编译器：跨文件解析覆盖局部变量、参数、字段与明显的静态 receiver；剩余引用以 `name` / `name-multi` 标注。
+* 团结引擎 `.meta` 的 guid 是加密的，prefab guid 无法反查资产路径（保留 guid 关系）。
+* `--force` 是图过旧时的兜底；正常增量依赖文件 mtime/size。
+* 无改动也要 36s 的原因是全局 rebind，P1 会改成按文件增量。
 
-## Development
+## 开发
 
 ```sh
 go test ./...
 go vet ./...
-go build ./cmd/game-project-graph
+go build ./cmd/codegraph233
 ```
 
-MIT licensed.
+MIT.

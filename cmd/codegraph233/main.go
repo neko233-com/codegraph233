@@ -1,4 +1,4 @@
-// Command game-project-graph indexes a game project (C#/Go + prefab + shader +
+// Command codegraph233 indexes a game project (C#/Go + prefab + shader +
 // config tables) and serves the graph over MCP stdio.
 package main
 
@@ -11,10 +11,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/neko233-com/game-project-graph/internal/config"
-	"github.com/neko233-com/game-project-graph/internal/detect"
-	"github.com/neko233-com/game-project-graph/internal/indexer"
-	"github.com/neko233-com/game-project-graph/internal/mcpserver"
+	"github.com/neko233-com/codegraph233/internal/config"
+	"github.com/neko233-com/codegraph233/internal/detect"
+	"github.com/neko233-com/codegraph233/internal/indexer"
+	"github.com/neko233-com/codegraph233/internal/mcpserver"
 )
 
 const version = "0.1.0"
@@ -38,7 +38,7 @@ func main() {
 	case "install-mcp":
 		runInstallMCP(args)
 	case "version", "--version", "-v":
-		fmt.Println("game-project-graph " + version)
+		fmt.Println("codegraph233 " + version)
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -49,17 +49,17 @@ func main() {
 }
 
 func usage() {
-	fmt.Print(`game-project-graph — AST GraphRAG for game projects (Unity / Tuanjie / UE-ready)
+	fmt.Print(`codegraph233 — AST GraphRAG for game projects (Unity / Tuanjie / UE-ready)
 
 Usage:
-  game-project-graph [serve]                 MCP stdio server (default)
-  game-project-graph index [--force]         Build/update the graph index
-  game-project-graph status [--json]         Show index status and detection
-  game-project-graph init [--frontend PATH] [--backend PATH]
-  game-project-graph install-mcp [--clients codex,cursor,vscode,air,cowork] [--print]
-  game-project-graph version
+  codegraph233 [serve]                 MCP stdio server (default)
+  codegraph233 index [--force]         Build/update the graph index
+  codegraph233 status [--json]         Show index status and detection
+  codegraph233 init [--frontend PATH] [--backend PATH]
+  codegraph233 install-mcp [--clients codex,cursor,vscode,air,cowork] [--print]
+  codegraph233 version
 
-Config: .game-project-graph.json at the project root; index: .game-project-graph/index.db
+Config: .codegraph233.json at the project root; index: .codegraph233/index.db
 `)
 }
 
@@ -73,10 +73,10 @@ func loadConfig() (*config.Config, error) {
 
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	root := fs.String("root", "", "project root (defaults to cwd / GAME_PROJECT_GRAPH_ROOT)")
+	root := fs.String("root", "", "project root (defaults to cwd / CODEGRAPH233_ROOT)")
 	_ = fs.Parse(args)
 	if *root != "" {
-		os.Setenv("GAME_PROJECT_GRAPH_ROOT", *root)
+		os.Setenv("CODEGRAPH233_ROOT", *root)
 	}
 	cfg, err := loadConfig()
 	if err != nil {
@@ -162,6 +162,7 @@ func runStatus(args []string) {
 	fmt.Printf("config:   %s\n", cfg.FilePath)
 	fmt.Printf("data:     %s\n", st.DataDir)
 	fmt.Printf("strategy: %s  engine: %s\n", st.Detection.Strategy.Name, st.Detection.Strategy.Engine)
+	fmt.Printf("languages: %v (policy: csharp=default, go=optional, lua=planned)\n", st.Languages)
 	for _, r := range st.Detection.Roots {
 		state := "ok"
 		if !r.Exists {
@@ -170,7 +171,7 @@ func runStatus(args []string) {
 		fmt.Printf("  root %-10s role=%-8s %-8s langs=%v path=%s\n", r.Key, r.Role, state, r.Languages, r.Path)
 	}
 	if !st.Exists {
-		fmt.Println("index:    not built (run `game-project-graph index`)")
+		fmt.Println("index:    not built (run `codegraph233 index`)")
 		return
 	}
 	fmt.Printf("indexed:  %s\n", st.IndexedAt)
@@ -223,37 +224,37 @@ func runInit(args []string) {
 	for _, r := range det.Roots {
 		fmt.Printf("  root %-8s exists=%-5v langs=%v\n", r.Key, r.Exists, r.Languages)
 	}
-	fmt.Println("next: game-project-graph index && game-project-graph install-mcp")
+	fmt.Println("next: codegraph233 index && codegraph233 install-mcp")
 }
 
 // ensureGitignore adds the index directory to .gitignore when missing.
 func ensureGitignore(dir string) {
 	path := filepath.Join(dir, ".gitignore")
-	const entry = "/.game-project-graph/"
+	const entry = "/.codegraph233/"
 	data, err := os.ReadFile(path)
 	if err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
-			if strings.TrimSpace(line) == entry || strings.TrimSpace(line) == ".game-project-graph/" {
+			if strings.TrimSpace(line) == entry || strings.TrimSpace(line) == ".codegraph233/" {
 				return
 			}
 		}
 		if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
 			data = append(data, '\n')
 		}
-		data = append(data, []byte("\n# game-project-graph 本地索引（勿提交）\n"+entry+"\n")...)
+		data = append(data, []byte("\n# codegraph233 本地索引（勿提交）\n"+entry+"\n")...)
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			fmt.Fprintln(os.Stderr, "warn: update .gitignore:", err)
 		}
 		return
 	}
-	_ = os.WriteFile(path, []byte("# game-project-graph 本地索引（勿提交）\n"+entry+"\n"), 0o644)
+	_ = os.WriteFile(path, []byte("# codegraph233 本地索引（勿提交）\n"+entry+"\n"), 0o644)
 }
 
 func runInstallMCP(args []string) {
 	fs := flag.NewFlagSet("install-mcp", flag.ExitOnError)
 	clients := fs.String("clients", "codex,cursor,vscode,air,cowork,workbuddy,project", "comma separated clients (codex,cursor,vscode,air,cowork,workbuddy,project)")
 	printOnly := fs.Bool("print", false, "print snippets instead of writing files")
-	exe := fs.String("exe", "game-project-graph", "command used in MCP configs")
+	exe := fs.String("exe", "codegraph233", "command used in MCP configs")
 	_ = fs.Parse(args)
 
 	cfg, err := loadConfig()
@@ -311,14 +312,14 @@ func runInstallMCP(args []string) {
 func snippet(client string, server, vsServer map[string]any) string {
 	switch client {
 	case "codex":
-		return `[mcp_servers.game_project_graph]
+		return `[mcp_servers.codegraph233]
 command = "` + server["command"].(string) + `"
 args = ["serve", "--root", "` + strings.ReplaceAll(server["args"].([]string)[2], `\`, `\\`) + `"]`
 	case "vscode":
-		b, _ := json.MarshalIndent(map[string]any{"servers": map[string]any{"game-project-graph": vsServer}}, "", "  ")
+		b, _ := json.MarshalIndent(map[string]any{"servers": map[string]any{"codegraph233": vsServer}}, "", "  ")
 		return string(b)
 	default:
-		b, _ := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{"game-project-graph": server}}, "", "  ")
+		b, _ := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{"codegraph233": server}}, "", "  ")
 		return string(b)
 	}
 }
@@ -329,14 +330,14 @@ func writeClientConfig(client, path string, server, vsServer map[string]any) err
 	}
 	if client == "codex" {
 		data, _ := os.ReadFile(path)
-		text := string(data)
-		if strings.Contains(text, "[mcp_servers.game_project_graph]") {
-			return nil
+		text := stripLegacyToml(string(data))
+		if strings.Contains(text, "[mcp_servers.codegraph233]") {
+			return os.WriteFile(path, []byte(text), 0o644)
 		}
 		root := server["args"].([]string)[2]
-		block := "\n[mcp_servers.game_project_graph]\ncommand = \"" + server["command"].(string) +
+		block := "\n[mcp_servers.codegraph233]\ncommand = \"" + server["command"].(string) +
 			"\"\nargs = [\"serve\", \"--root\", \"" + strings.ReplaceAll(root, `\`, `\\`) + "\"]\n"
-		return os.WriteFile(path, append(data, []byte(block)...), 0o644)
+		return os.WriteFile(path, append([]byte(text), []byte(block)...), 0o644)
 	}
 	existing := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
@@ -353,10 +354,12 @@ func writeClientConfig(client, path string, server, vsServer map[string]any) err
 		section = map[string]any{}
 		existing[key] = section
 	}
+	delete(section, "game-project-graph")
+	delete(section, "game_project_graph")
 	if client == "vscode" {
-		section["game-project-graph"] = vsServer
+		section["codegraph233"] = vsServer
 	} else {
-		section["game-project-graph"] = server
+		section["codegraph233"] = server
 	}
 	data, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
@@ -386,3 +389,24 @@ func fatal(err error) {
 }
 
 var _ = runtime.GOOS
+
+// stripLegacyToml removes the pre-rename [mcp_servers.game_project_graph] section.
+func stripLegacyToml(text string) string {
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	skip := false
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "[") {
+			skip = strings.HasPrefix(t, "[mcp_servers.game_project_graph")
+			if skip {
+				continue
+			}
+		}
+		if !skip {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+

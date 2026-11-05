@@ -12,13 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/neko233-com/game-project-graph/internal/assets"
-	"github.com/neko233-com/game-project-graph/internal/config"
-	"github.com/neko233-com/game-project-graph/internal/detect"
-	"github.com/neko233-com/game-project-graph/internal/lang/csharp"
-	"github.com/neko233-com/game-project-graph/internal/lang/golang"
-	"github.com/neko233-com/game-project-graph/internal/model"
-	"github.com/neko233-com/game-project-graph/internal/store"
+	"github.com/neko233-com/codegraph233/internal/assets"
+	"github.com/neko233-com/codegraph233/internal/config"
+	"github.com/neko233-com/codegraph233/internal/detect"
+	"github.com/neko233-com/codegraph233/internal/lang/csharp"
+	"github.com/neko233-com/codegraph233/internal/lang/golang"
+	"github.com/neko233-com/codegraph233/internal/model"
+	"github.com/neko233-com/codegraph233/internal/store"
 )
 
 // Options tunes an indexing run.
@@ -200,6 +200,10 @@ func scanRoots(cfg *config.Config, roots []rootScan, st *store.Store, opts Optio
 					return nil
 				}
 				lang := langOf(rel, p, configDirs, r.Key, prefabsOn, shadersOn, configsOn, cfg)
+				if (lang == "csharp" || lang == "go") && !cfg.LanguageEnabled(lang) {
+					// Code languages follow the policy matrix: csharp default, go optional, lua planned.
+					return nil
+				}
 				if lang == "" {
 					return nil
 				}
@@ -568,6 +572,8 @@ type Status struct {
 	Assets     int            `json:"assets"`
 	AssetEdges int            `json:"asset_edges"`
 	ConfigDirs []string       `json:"config_dirs,omitempty"`
+	Languages  []string       `json:"languages,omitempty"`
+	LanguagePolicy []config.LanguagePolicy `json:"language_policy"`
 }
 
 // ReadStatus loads index metadata for status/overview tools.
@@ -578,6 +584,8 @@ func ReadStatus(cfg *config.Config) Status {
 		DataDir:    cfg.DataDir(),
 		Detection:  detect.Detect(cfgData),
 		ConfigDirs: detect.Detect(cfgData).ConfigDirs,
+		Languages:  cfgData.EffectiveLanguages(),
+		LanguagePolicy: config.LanguagePolicies,
 	}
 	if _, err := os.Stat(cfg.DBPath()); err != nil {
 		return s

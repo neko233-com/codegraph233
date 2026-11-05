@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neko233-com/game-project-graph/internal/config"
-	"github.com/neko233-com/game-project-graph/internal/model"
+	"github.com/neko233-com/codegraph233/internal/config"
+	"github.com/neko233-com/codegraph233/internal/model"
 )
 
 // RootInfo is the resolved state of one configured root.
@@ -181,7 +181,7 @@ func isSkipDir(name string) bool {
 	switch name {
 	case ".git", "Library", "Temp", "Logs", "obj", "node_modules", ".codely-cli",
 		"Bundles", "Intermediate", "Binaries", "Saved", "DerivedDataCache", ".vs",
-		".cursor", ".codex", ".game-project-graph":
+		".cursor", ".codex", ".codegraph233":
 		return true
 	}
 	return false

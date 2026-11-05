@@ -1,11 +1,11 @@
-# game-project-graph installer (Windows / PowerShell 7+)
+# codegraph233 installer (Windows / PowerShell 7+)
 #
-# Global install of the `game-project-graph` MCP server, then optional MCP
+# Global install of the `codegraph233` MCP server, then optional MCP
 # registration for Codex / Cursor / VS Code / JetBrains Air / Cowork.
 #
 # Usage:
 #   ./install.ps1                      # install from GitHub (main branch)
-#   ./install.ps1 -Source "D:\path\game-project-graph"   # install a local checkout
+#   ./install.ps1 -Source "D:\path\codegraph233"   # install a local checkout
 #   ./install.ps1 -NoMcp               # install binary only
 #   ./install.ps1 -Ref v0.1.0          # pin a tag/branch/commit
 param(
@@ -16,7 +16,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Module = "github.com/neko233-com/game-project-graph"
+$Module = "github.com/neko233-com/codegraph233"
 
 function Fail($msg) {
     Write-Host "ERROR: $msg" -ForegroundColor Red
@@ -37,10 +37,10 @@ if ($Source -ne "") {
         Fail "本地源码目录缺少 go.mod：$Source"
     }
     Write-Host "Installing from local source: $Source"
-    & go install -C $Source "$Module/cmd/game-project-graph"
+    & go install -C $Source "$Module/cmd/codegraph233"
 } else {
     Write-Host "Installing $Module@$Ref (this downloads modules on first run)…"
-    & go install "$Module/cmd/game-project-graph@$Ref"
+    & go install "$Module/cmd/codegraph233@$Ref"
 }
 if ($LASTEXITCODE -ne 0) { Fail "go install 失败（退出码 $LASTEXITCODE）" }
 
@@ -50,7 +50,7 @@ if ([string]::IsNullOrWhiteSpace($gobin)) {
     $gobin = Join-Path (& go env GOPATH) "bin"
 }
 $gobin = $gobin.Trim()
-$exe = Join-Path $gobin "game-project-graph.exe"
+$exe = Join-Path $gobin "codegraph233.exe"
 if (-not (Test-Path $exe)) { Fail "安装后未找到 $exe" }
 
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -67,17 +67,17 @@ if ($LASTEXITCODE -ne 0) { Fail "二进制自检失败" }
 
 # --- 4. optional MCP registration in the current project -------------------
 if (-not $NoMcp) {
-    if (Test-Path ".game-project-graph.json") {
+    if (Test-Path ".codegraph233.json") {
         Write-Host "Registering MCP server for: $Clients"
-        & $exe install-mcp --clients $Clients --exe "game-project-graph"
+        & $exe install-mcp --clients $Clients --exe "codegraph233"
     } else {
-        Write-Host "当前目录没有 .game-project-graph.json，跳过 MCP 注册。" -ForegroundColor Yellow
-        Write-Host "在项目根执行： game-project-graph init && game-project-graph install-mcp"
+        Write-Host "当前目录没有 .codegraph233.json，跳过 MCP 注册。" -ForegroundColor Yellow
+        Write-Host "在项目根执行： codegraph233 init && codegraph233 install-mcp"
     }
 }
 
 Write-Host ""
 Write-Host "Done. Next steps:" -ForegroundColor Green
-Write-Host "  game-project-graph init          # 生成 .game-project-graph.json（自动识别引擎/前后端）"
-Write-Host "  game-project-graph index         # 建立/增量更新索引"
-Write-Host "  game-project-graph status        # 查看识别结果与统计"
+Write-Host "  codegraph233 init          # 生成 .codegraph233.json（自动识别引擎/前后端）"
+Write-Host "  codegraph233 index         # 建立/增量更新索引"
+Write-Host "  codegraph233 status        # 查看识别结果与统计"

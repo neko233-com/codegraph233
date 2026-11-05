@@ -7,7 +7,7 @@ package csharp
 import (
 	"strings"
 
-	"github.com/neko233-com/game-project-graph/internal/model"
+	"github.com/neko233-com/codegraph233/internal/model"
 )
 
 type parser struct {
