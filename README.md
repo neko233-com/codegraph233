@@ -69,6 +69,27 @@ codegraph233 serve       # MCP stdio（客户端会自动拉起）
 
 RSS 仍由 SQLite 页缓存决定（~2.4GB 量级），换语言不会改变这一点。
 
+## 更新与镜像加速
+
+```sh
+codegraph233 update --check     # 只检查：当前版本 vs GitHub 最新 release
+codegraph233 update             # 下载并替换当前二进制
+codegraph233 update --force     # 即使版本相同也重装
+codegraph233 update --status    # 查看自动更新设置和 mirror
+codegraph233 update --check --json
+codegraph233 update --mirror https://ghfast.top/   # 换镜像并持久化
+```
+
+* 自动更新默认开启：`index` / `serve` 启动时在后台检查，24 小时最多一次；发现新版本会下载、
+  替换二进制并提示重启 MCP 客户端。`--no-update` 可跳过本次检查。
+* 设置文件：`~/.codegraph233/settings.json`（`auto_update`、`interval_hours`、`mirror`、`mirrors`、
+  `last_check`、`last_version`）。可直接编辑。
+* 环境变量：`CODEGRAPH233_MIRROR`（覆盖镜像）、`CODEGRAPH233_AUTO_UPDATE=0`（关闭自动更新）、
+  `CODEGRAPH233_NO_UPDATE=1`（本次不检查）。
+* 默认镜像顺序：`ghfast.top` → `gh-proxy.com` → `ghproxy.net` → GitHub 直连；任一成功即停止。
+  `mirror: "none"` 表示只用直连。下载走系统 `curl`，不引入新的 HTTP 依赖。
+* Windows 下正在运行的 exe 无法覆盖，更新采用“重命名旧文件 → 写入新文件”，因此更新后需重启
+  MCP 客户端；遗留的 `.old-*` 与旧版本 exe 会在下次启动时自动清理。
 ## 配置
 
 `.codegraph233.json`（提交）：

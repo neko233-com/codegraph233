@@ -61,4 +61,4 @@ Write-Host "Done. Next steps:" -ForegroundColor Green
 Write-Host "  codegraph233 init          # 生成 .codegraph233.json"
 Write-Host "  codegraph233 index         # 建立/增量更新索引"
 Write-Host "  codegraph233 status        # 查看统计"
-Write-Host "  codegraph233 serve         # MCP stdio（客户端会自动启动）"
+Write-Host "  codegraph233 serve         # MCP stdio（客户端会自动启动）"`nWrite-Host "  codegraph233 update --check  # 检查更新（index/serve 默认自动检查）"

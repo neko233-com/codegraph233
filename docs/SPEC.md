@@ -116,6 +116,13 @@
   - `global`：写入用户级配置（`~/.codex`、`~/.cursor`、`~/.air`、`~/.codely-cli`、`~/.workbuddy`、VS Code 用户目录），条目为 `serve`，按客户端工作目录自动发现 `.codegraph233.json`；
   - `both`：两处都写，全局兜底 + 项目精确。
 
+### 5.1 更新与镜像加速
+
+* `codegraph233 update [--check] [--force] [--mirror URL] [--json] [--status]` 读取 GitHub 最新 release，按平台选择资产（Windows zip / Linux tar.gz），下载后替换当前二进制。
+* 自动更新：`index` / `serve` 启动时后台检查，间隔 `interval_hours`（默认 24h）；`CODEGRAPH233_NO_UPDATE=1` 跳过单次，`CODEGRAPH233_AUTO_UPDATE=0` 关闭。
+* 设置：`~/.codegraph233/settings.json`（`auto_update` / `interval_hours` / `mirror` / `mirrors` / `last_check` / `last_version`）；`CODEGRAPH233_MIRROR` 可覆盖。
+* 镜像：按 `mirror` → `mirrors` → 直连顺序尝试，默认 `ghfast.top` / `gh-proxy.com` / `ghproxy.net`；`mirror: "none"` 只用直连。HTTP 由系统 `curl` 完成，保持零新增依赖。
+* 替换：Windows 先重命名运行中的 exe 再写入新文件，客户端需重启；`.old-*` 与旧版本 exe 下次启动自动清理。
 ## 6. 非目标（明确不做）
 
 1. 不做编译级类型检查或语法诊断（不替代 IDE / Roslyn）；资产元信息是头部/文本解析，不替代 AssetDatabase 的导入设置。

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0 — 2026-11-05
+
+**自更新、GitHub 镜像加速，并清理旧版本残留。**
+
+### 新增
+
+- `codegraph233 update`：检查 / 下载 / 替换当前二进制；`--check`、`--force`、`--mirror URL`、
+  `--json`、`--status`。按平台选择 release 资产（Windows zip、Linux/macOS tar.gz）。
+- 自动更新：`index` / `serve` 启动时后台检查（默认 24h 一次），发现新版本自动安装并提示重启客户端。
+- 镜像加速：默认按 `ghfast.top` → `gh-proxy.com` → `ghproxy.net` → 直连回退；`mirror: "none"` 可禁用。
+- 设置文件 `~/.codegraph233/settings.json` 与环境变量 `CODEGRAPH233_MIRROR` /
+  `CODEGRAPH233_AUTO_UPDATE` / `CODEGRAPH233_NO_UPDATE`。
+- 启动时自动清理 `.old-*` 与旧版本 `codegraph233-*.exe`。
+
+### 变更
+
+- 版本号统一从 `Cargo.toml` 读取（`codegraph233 version` 与 MCP `serverInfo`）。
+- 安装/更新使用系统 `curl`，不新增 HTTP 依赖；下载后校验 release 资产大小。
+
 ## 0.3.1 — 2026-11-05
 
 **补齐 SPEC §3.3 里承诺、但 Rust 版仍是“只有体积”的资产解析。**

@@ -14,6 +14,7 @@ mod rust_lang;
 mod setup;
 mod store;
 mod ts_lang;
+mod update;
 
 use std::path::PathBuf;
 
@@ -38,6 +39,8 @@ fn usage() {
          codegraph233 register|unregister [--root PATH]\n\
          codegraph233 projects\n\
          codegraph233 install-mcp [--scope global|project|both]\n\
+         codegraph233 update [--check] [--force] [--mirror URL] [--json]\n\
+         codegraph233 update --status\n\
          codegraph233 version\n"
     );
 }
@@ -51,6 +54,12 @@ fn main() {
         .map(PathBuf::from)
         .or_else(|| std::env::var("CODEGRAPH233_ROOT").ok().map(PathBuf::from))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+    // Remove leftovers of earlier self-updates (renamed running binaries).
+    update::cleanup_old_binaries();
+    if matches!(cmd, "index" | "serve" | "mcp") && !has_flag(&rest, "--no-update") {
+        std::thread::spawn(update::auto);
+    }
 
     match cmd {
         "index" => {
@@ -306,7 +315,24 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        "version" | "--version" | "-v" => println!("codegraph233 0.3.1 (rust)"),
+        "update" => {
+            if has_flag(&rest, "--status") {
+                if let Err(e) = update::print_status() {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            } else {
+                let check = has_flag(&rest, "--check");
+                let force = has_flag(&rest, "--force");
+                let json = has_flag(&rest, "--json");
+                let mirror = arg_value(&rest, "--mirror");
+                if let Err(e) = update::run(check, force, mirror, json) {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        "version" | "--version" | "-v" => println!("codegraph233 {} (rust)", update::current_version()),
         _ => usage(),
     }
 }
