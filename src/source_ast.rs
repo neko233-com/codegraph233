@@ -367,9 +367,26 @@ impl Extractor<'_> {
                     "method"
                 };
                 let declaration = if kind == "function_declarator" {
-                    node.parent()
-                        .filter(|p| matches!(p.kind(), "declaration" | "field_declaration"))
-                        .unwrap_or(node)
+                    let mut parent = node.parent();
+                    let mut declaration = node;
+                    for _ in 0..8 {
+                        let Some(value) = parent else { break };
+                        if matches!(value.kind(), "declaration" | "field_declaration") {
+                            declaration = value;
+                            break;
+                        }
+                        if !matches!(
+                            value.kind(),
+                            "pointer_declarator"
+                                | "reference_declarator"
+                                | "parenthesized_declarator"
+                                | "attributed_declarator"
+                        ) {
+                            break;
+                        }
+                        parent = value.parent();
+                    }
+                    declaration
                 } else {
                     node
                 };
@@ -903,7 +920,7 @@ mod tests {
     }
     #[test]
     fn split_cpp_c_linkage_guards_preserve_real_header_members_and_original_lines() {
-        let source=b"#ifndef API_H\n#define API_H\n#ifdef __cplusplus\nextern \"C\" {\n#endif\nstruct Handle;\nSE_API int SE_CALL begin(Handle *handle);\n#ifdef __cplusplus\n}\n#endif\n#endif\n";
+        let source=b"#ifndef API_H\n#define API_H\n#ifdef __cplusplus\nextern \"C\" {\n#endif\nstruct Handle;\nSE_API Handle *SE_CALL begin(Handle *handle);\nSE_API int SE_CALL ping(Handle *handle);\n#ifdef __cplusplus\n}\n#endif\n#endif\n";
         let parsed = parse_with_annotations(
             "api.h",
             "native",
@@ -914,7 +931,11 @@ mod tests {
         assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
         let begin = parsed.symbols.iter().find(|s| s.name == "begin").unwrap();
         assert_eq!(begin.start_line, 7);
-        assert!(begin.signature.contains("SE_API int SE_CALL"));
+        assert!(begin.signature.contains("SE_API Handle *SE_CALL"));
+        assert!(parsed
+            .symbols
+            .iter()
+            .any(|s| s.name == "ping" && s.signature.contains("SE_API int SE_CALL")));
         assert!(begin.modifiers.contains("C-linkage guards"));
         let mut copy = source.to_vec();
         assert!(normalize_c_linkage_guards(source, &mut copy));

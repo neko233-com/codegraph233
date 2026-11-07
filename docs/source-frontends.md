@@ -76,3 +76,9 @@ intermediate signature assertions failed and were corrected before installation.
 The final real SpineEditorX index includes the native codec C/header and complete
 tooling directories: 1,987 files, zero parse diagnostics. Existing unrelated
 passing tests were not repeatedly executed.
+
+The real C/header export-name inventory also caught a pointer-return prototype
+whose declarator node omitted its annotation prefix. Bounded ancestry now uses
+the full declaration. The pointer-return test passed and both real files matched
+all11 API names, original annotation prefixes and argument counts on parser
+0.4.1-full5. The failed first inventory is retained separately.
