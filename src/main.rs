@@ -4,6 +4,11 @@ mod config;
 mod csharp;
 mod go_lang;
 mod indexer;
+mod jvm_facts;
+mod jvm_binary;
+mod source_ast;
+mod quiet;
+mod powershell_ast;
 mod lexer;
 mod lua_lang;
 mod mcp;
@@ -46,6 +51,7 @@ fn usage() {
 }
 
 fn main() {
+    if let Err(error) = quiet::initialize() { eprintln!("error: {error}"); std::process::exit(1); }
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("help");
     let rest: Vec<String> = args.iter().skip(2).cloned().collect();
@@ -84,8 +90,8 @@ fn main() {
                 Ok(stats) => {
                     if opts.quiet {
                         println!(
-                            "{{\"files\":{},\"changed\":{},\"removed\":{},\"symbols\":{},\"refs\":{},\"edges\":{},\"unresolved\":{},\"elapsed_ms\":{}}}",
-                            stats.files, stats.changed, stats.removed, stats.symbols, stats.refs, stats.edges, stats.unresolved, stats.elapsed_ms
+                            "{{\"files\":{},\"changed\":{},\"removed\":{},\"symbols\":{},\"refs\":{},\"edges\":{},\"unresolved\":{},\"parse_errors\":{},\"elapsed_ms\":{}}}",
+                            stats.files, stats.changed, stats.removed, stats.symbols, stats.refs, stats.edges, stats.unresolved, stats.parse_errors, stats.elapsed_ms
                         );
                     }
                 }

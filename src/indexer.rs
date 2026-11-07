@@ -26,6 +26,7 @@ pub struct Stats {
     pub edges: i64,
     pub assets: i64,
     pub unresolved: usize,
+    pub parse_errors: usize,
     pub elapsed_ms: u128,
 }
 
@@ -49,7 +50,15 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         "cs" if f.code => Some("csharp"),
         "go" if f.code => Some("go"),
         "rs" if f.code => Some("rust"),
-        "ts" | "tsx" | "js" | "jsx" if f.code => Some("typescript"),
+        "java" if f.code => Some("java"),
+        "class" | "jar" if f.code => Some("jvm"),
+        "c" if f.code => Some("c"),
+        "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" if f.code => Some("cpp"),
+        "h" if f.code => Some(if cfg.language_enabled("cpp") { "cpp" } else { "c" }),
+        "py" | "pyi" if f.code => Some("python"),
+        "ps1" | "psm1" | "psd1" if f.code => Some("powershell"),
+        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts" if f.code => Some("typescript"),
+        "jsonl" if f.code && rel.ends_with(".cg-jvm.jsonl") => Some("jvm"),
         "lua" if f.code => Some("lua"),
         "prefab" | "unity" if f.prefabs => Some("prefab"),
         "shader" | "hlsl" | "cginc" | "compute" if f.shaders => Some("shader"),
@@ -96,7 +105,7 @@ fn walk(dir: &Path, base: &Path, root_key: &str, excludes: &[String], cfg: &Conf
             continue;
         }
         let Some(lang) = lang_of(&rel, cfg, config_dirs) else { continue };
-        if matches!(lang, "csharp" | "go" | "rust" | "typescript" | "lua") && !cfg.language_enabled(lang) {
+        if matches!(lang, "csharp" | "go" | "rust" | "typescript" | "lua" | "jvm" | "java" | "c" | "cpp" | "python" | "powershell") && !cfg.language_enabled(lang) {
             continue;
         }
         if let Ok(meta) = entry.metadata() {
@@ -192,6 +201,15 @@ fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(data) => crate::lua_lang::parse(&f.rel, &f.root, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
+        "jvm" => match std::fs::read(&f.abs) {
+            Ok(data) => if f.rel.ends_with(".cg-jvm.jsonl") { crate::jvm_facts::parse(&f.rel, &f.root, &data) }
+                else { crate::jvm_binary::parse(&f.rel, &f.root, &data, cfg.raw.jvm_release) },
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
+        "java" | "c" | "cpp" | "python" | "powershell" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::source_ast::parse(&f.rel, &f.root, &f.lang, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
         "prefab" => match std::fs::read_to_string(&f.abs) {
             Ok(text) => assets::parse_prefab(&f.rel, &f.root, &text),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
@@ -255,11 +273,12 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.3.1";
+const PARSER_VERSION: &str = "0.4.1-full2";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
     let db_path = cfg.db_path();
+    let config_identity = serde_json::to_string(&cfg.raw).map_err(|e| e.to_string())?;
 
     // An index written by an older schema (or by older parsers) cannot answer
     // the current queries. Indexes are disposable, so rebuild instead of
@@ -268,7 +287,8 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
         let (stale, rows) = match Store::open(&db_path, opts.fast) {
             Ok(probe) => (
                 probe.is_stale().unwrap_or(false)
-                    || probe.get_meta("parser_version") != PARSER_VERSION,
+                    || probe.get_meta("parser_version") != PARSER_VERSION
+                    || probe.get_meta("config_identity") != config_identity,
                 probe.counts().0,
             ),
             Err(_) => (false, 0),
@@ -343,7 +363,8 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
             refs: rcount,
             edges: ecount,
             assets: assets_count,
-            unresolved: 0,
+            unresolved: store.get_meta("unresolved_refs").parse().unwrap_or(0),
+            parse_errors: store.get_meta("parse_errors").parse().unwrap_or(0),
             elapsed_ms: elapsed,
         });
     }
@@ -362,6 +383,8 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
 
     let jobs = if opts.jobs > 0 {
         opts.jobs
+    } else if let Ok(jobs) = std::env::var("CODEGRAPH233_JOBS") {
+        jobs.parse::<usize>().unwrap_or(1).clamp(1,64)
     } else {
         std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
     };
@@ -375,6 +398,11 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
             .map(|f| parse_file(f, cfg))
             .collect()
     });
+    for (file, result) in changed.iter().zip(&parsed) {
+        if file.lang == "jvm" && !result.errors.is_empty() {
+            return Err(format!("Invalid JVM facts {}: {}", file.rel, result.errors.join("; ")));
+        }
+    }
 
     let mut changed_file_ids: Vec<i64> = Vec::new();
     let mut new_symbol_ids: Vec<i64> = Vec::new();
@@ -407,6 +435,13 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
             }
             Store::insert_refs(&tx, file_id, &res.refs, &src_keys)?;
             Store::insert_assets_and_edges(&tx, &res.assets, &res.asset_edges)?;
+            let diagnostic_key = format!("diagnostic:{}|{}", f.root, f.rel);
+            if res.errors.is_empty() {
+                tx.execute("DELETE FROM meta WHERE key=?1", [&diagnostic_key]).map_err(|e| e.to_string())?;
+            } else {
+                let value = serde_json::json!({"root":f.root,"path":f.rel,"lang":f.lang,"errors":res.errors}).to_string();
+                tx.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?1,?2)", rusqlite::params![diagnostic_key,value]).map_err(|e| e.to_string())?;
+            }
             if !res.guid_rows.is_empty() {
                 let rows: Vec<crate::model::GuidRow> = res.guid_rows.clone();
                 // plaintext meta mappings only fill gaps
@@ -449,7 +484,12 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
         let mut seen: HashSet<i64> = picked.iter().map(|r| r.id).collect();
         let new_names: Vec<String> = new_symbol_ids
             .iter()
-            .filter_map(|id| binder.row_by_id(*id).map(|s| s.name.clone()))
+            .filter_map(|id| binder.row_by_id(*id))
+            .flat_map(|s| {
+                let mut names = vec![s.name.clone()];
+                if s.lang == "jvm" { names.push(s.qualname.clone()); }
+                names
+            })
             .collect();
         for r in store.ref_rows_unresolved_named(&new_names)? {
             if seen.insert(r.id) {
@@ -480,7 +520,6 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     if !incremental {
         Store::clear_edges(&tx)?;
     }
-    let pre_unresolved = refs.iter().filter(|r| r.target == 0).count() as i64;
     let mut updates: Vec<(i64, i64, String)> = Vec::new();
     let mut edges: Vec<(i64, i64, String, i32, String)> = Vec::new();
     let mut seen: HashSet<(i64, i64, String)> = HashSet::new();
@@ -524,20 +563,23 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     store.set_meta("indexed_at", &crate::store::now_unix().to_string())?;
     store.set_meta("profile", &cfg.raw.profile)?;
     store.set_meta("parser_version", PARSER_VERSION)?;
-    store.set_meta("rebind_mode", if incremental { "incremental" } else { "global" })?;
-    let unresolved_total: i64 = if incremental {
-        let prev: i64 = store.get_meta("unresolved_refs").parse().unwrap_or(-1);
-        if prev >= 0 {
-            (prev - pre_unresolved + unresolved as i64).max(0)
-        } else {
-            store
-                .conn
-                .query_row("SELECT COUNT(*) FROM refs WHERE COALESCE(target,0)=0", [], |r| r.get(0))
-                .unwrap_or(0)
+    store.set_meta("config_identity", &config_identity)?;
+    let mut parse_errors = 0usize;
+    let diagnostics: Vec<(String,String)> = store.conn.prepare("SELECT key,value FROM meta WHERE key LIKE 'diagnostic:%'").map_err(|e| e.to_string())?
+        .query_map([], |r| Ok((r.get(0)?,r.get(1)?))).map_err(|e| e.to_string())?
+        .collect::<Result<_,_>>().map_err(|e| e.to_string())?;
+    for (key,value) in diagnostics {
+        if !present.contains(key.trim_start_matches("diagnostic:")) {
+            store.conn.execute("DELETE FROM meta WHERE key=?1", [&key]).map_err(|e| e.to_string())?;
+        } else if let Ok(value) = serde_json::from_str::<serde_json::Value>(&value) {
+            parse_errors += value["errors"].as_array().map(Vec::len).unwrap_or(0);
         }
-    } else {
-        unresolved as i64
-    };
+    }
+    store.set_meta("parse_errors", &parse_errors.to_string())?;
+    store.set_meta("rebind_mode", if incremental { "incremental" } else { "global" })?;
+    let unresolved_total: i64 = store.conn
+        .query_row("SELECT COUNT(*) FROM refs WHERE COALESCE(target,0)=0", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
     store.set_meta("unresolved_refs", &unresolved_total.to_string())?;
     let (fcount, scount, rcount, ecount) = store.counts();
     let assets_count: i64 = store
@@ -562,7 +604,8 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
         refs: rcount,
         edges: ecount,
         assets: assets_count,
-        unresolved,
+        unresolved: unresolved_total as usize,
+        parse_errors,
         elapsed_ms: elapsed,
     })
 }
@@ -578,6 +621,8 @@ pub struct Status {
     pub assets: i64,
     pub guid_entries: i64,
     pub indexed_at: i64,
+    pub parse_errors: usize,
+    pub parser_version: String,
 }
 
 pub fn status(cfg: &Config) -> Status {
@@ -594,12 +639,17 @@ pub fn status(cfg: &Config) -> Status {
         assets: 0,
         guid_entries: 0,
         indexed_at: 0,
+        parse_errors: 0,
+        parser_version: String::new(),
     };
     if !exists {
         return st;
     }
     if let Ok(store) = Store::open(&db, false) {
-        st.stale = store.is_stale().unwrap_or(false);
+        st.parser_version = store.get_meta("parser_version");
+        st.parse_errors = store.get_meta("parse_errors").parse().unwrap_or(0);
+        st.stale = store.is_stale().unwrap_or(false) || st.parser_version != PARSER_VERSION
+            || serde_json::to_string(&cfg.raw).map(|v| v != store.get_meta("config_identity")).unwrap_or(true);
         let (f, s, r, e) = store.counts();
         st.files = f;
         st.symbols = s;
@@ -728,6 +778,56 @@ mod tests {
         assert_eq!(left, 0);
         drop(store);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn node_module_extensions_are_indexed_and_imports_bind_without_views() {
+        let dir = temp_project("node-module-extensions");
+        write(&dir.join(".codegraph233.json"), r#"{"version":1,"profile":"code","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["typescript"]}"#);
+        write(&dir.join("codec.cjs"), "function encode(value) { return value; } module.exports = { encode };");
+        write(&dir.join("entry.mjs"), "import { encode } from './codec.cjs'; export function render() { return encode(43); }");
+        write(&dir.join("policy.cts"), "export function guard(): boolean { return true; }");
+        write(&dir.join("helper.mts"), "import { guard } from './policy.cts'; export function check() { return guard(); }");
+        let cfg = config::load(&dir).unwrap();
+        let result = run(&cfg, &Options { jobs: 1, quiet: true, ..Default::default() }).unwrap();
+        assert_eq!(result.files, 4);
+        let edges = edge_set(&cfg.db_path());
+        assert!(edges.contains(&("entry.render".into(), "codec.encode".into(), "calls".into())), "{edges:?}");
+        assert!(edges.contains(&("helper.check".into(), "policy.guard".into(), "calls".into())), "{edges:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mixed_source_graph_preserves_imports_errors_and_incremental_health() {
+        let dir = temp_project("mixed-source");
+        fs::remove_file(dir.join("A.cs")).unwrap();
+        fs::remove_file(dir.join("B.cs")).unwrap();
+        write(&dir.join(".codegraph233.json"), r#"{"version":1,"profile":"code","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#);
+        write(&dir.join("pkg/codec.py"), "def encode(value):\n    return value\n");
+        write(&dir.join("pkg/entry.py"), "from .codec import encode as pack\ndef run():\n    return pack(43)\n");
+        write(&dir.join("demo/A.java"), "package demo; class A { static int work(int n) { return n; } }");
+        write(&dir.join("demo/B.java"), "package demo; class B { int run() { return A.work(43); } }");
+        write(&dir.join("bad.py"), "def broken(:\n");
+        let cfg=config::load(&dir).unwrap();
+        let first=run(&cfg,&opts()).unwrap();
+        assert!(first.parse_errors > 0);
+        let edges=edge_set(&cfg.db_path());
+        assert!(edges.contains(&("pkg.entry.run".into(),"pkg.codec.encode".into(),"calls".into())),"{edges:?}");
+        assert!(edges.contains(&("demo.B.run".into(),"demo.A.work".into(),"calls".into())),"{edges:?}");
+        let idle=run(&cfg,&opts()).unwrap();
+        assert_eq!(idle.changed,0);
+        assert_eq!(idle.parse_errors,first.parse_errors);
+        assert_eq!(idle.unresolved,first.unresolved);
+        write(&dir.join("bad.py"), "def repaired():\n    return 43\n");
+        let repaired=run(&cfg,&opts()).unwrap();
+        assert_eq!(repaired.parse_errors,0);
+        fs::remove_file(dir.join("pkg/codec.py")).unwrap();
+        let removed=run(&cfg,&opts()).unwrap();
+        assert_eq!(removed.removed,1);
+        assert!(removed.unresolved > repaired.unresolved);
+        let idle=run(&cfg,&opts()).unwrap();
+        assert_eq!(idle.unresolved,removed.unresolved);
+        let _=fs::remove_dir_all(dir);
     }
 }
 

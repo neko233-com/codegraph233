@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.1-dev — unreleased
+
+- Index `.mjs`, `.cjs`, `.mts` and `.cts` directly and normalize relative imports;
+  content-copy views are no longer needed for those extensions.
+- Add bounded tree-sitter Java/C/C++/Python/PowerShell source graphs, Python
+  import aliases and PowerShell 7 parse-only recovery. Input scripts are never
+  invoked. Preserve syntax diagnostics and reject guessed ambiguous receivers.
+- Read ordinary CLASS/JAR inputs natively without a JVM; inventory archive member
+  hashes, decode modified UTF-8 and select multi-release classes explicitly.
+  Optional versioned ASM facts remain an independent import/oracle path.
+- Expose persistent parse diagnostics, correct incremental unresolved counts and
+  invalidate parser/configuration changes. Generic initialization enables auto
+  languages; opt-in Windows quiet scheduling uses one CPU at below-normal priority.
+- Reject partial/inconsistent fact streams and keep JVM binding descriptor-exact,
+  including incremental discovery of previously missing declarations.
+- This working-tree build is not a published stable release or a Java source
+  recovery claim. Existing stable installations remain separately identifiable.
+
 ## 0.4.0 — 2026-11-05
 
 **自更新、GitHub 镜像加速，并清理旧版本残留。**

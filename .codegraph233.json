@@ -10,7 +10,7 @@
     }
   ],
   "languages": [
-    "rust"
+    "auto"
   ],
   "exclude": [
     "target",
@@ -27,5 +27,6 @@
     "config_tables": null,
     "guid_map": null
   },
-  "guid_map": []
+  "guid_map": [],
+  "jvm_release": 8
 }

@@ -49,11 +49,12 @@ pub fn init(dir: &Path, backend: Option<&str>, profile: &str) -> Result<PathBuf,
         strategy: strategy.clone(),
         profile: profile.to_string(),
         roots,
-        languages: vec!["csharp".into()],
+        languages: vec![if strategy == "generic" { "auto".into() } else { "csharp".into() }],
         exclude: Vec::new(),
         config_dirs: Vec::new(),
         features: Default::default(),
         guid_map: Vec::new(),
+        jvm_release: crate::config::jvm_release(),
     };
     let text = serde_json::to_string_pretty(&raw).map_err(|e| e.to_string())?;
     fs::write(&path, format!("{text}\n")).map_err(|e| e.to_string())?;

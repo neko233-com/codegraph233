@@ -31,7 +31,7 @@ pub fn parse(rel: &str, root: &str, src: &[u8]) -> FileParse {
 
 fn module_of(rel: &str) -> String {
     let mut r = rel.to_string();
-    for ext in [".tsx", ".ts", ".jsx", ".js"] {
+    for ext in [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".mts", ".cts"] {
         if let Some(s) = r.strip_suffix(ext) {
             r = s.to_string();
             break;
@@ -596,7 +596,7 @@ fn resolve_module(spec: &str, rel: &str) -> String {
             }
         }
         let mut m = parts.join(".");
-        for ext in [".tsx", ".ts", ".jsx", ".js"] {
+        for ext in [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".mts", ".cts"] {
             if let Some(s) = m.strip_suffix(ext) {
                 m = s.to_string();
                 break;

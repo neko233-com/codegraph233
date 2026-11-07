@@ -2,7 +2,7 @@
 
 **AST GraphRAG for game projects — Rust 实现。**
 
-索引客户端 C# / Go / Rust / TypeScript / Lua、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
+索引 C# / Go / Rust / TypeScript / JavaScript / Lua / Java / C / C++ / Python / PowerShell 源码、普通 CLASS/JAR、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
 
 ## 能力（Rust 实现）
 
@@ -13,6 +13,9 @@
 | Rust 前端（mod / struct / enum / trait / impl / fn / use 别名） | ✅ |
 | TypeScript 前端（class / interface / enum / function / import 别名 / extends / implements） | ✅ |
 | Lua 前端（模块函数 / `a.b` 与 `a:b` 方法 / local 函数与表 / require / 调用） | ✅ |
+| Node 模块扩展名 `.mjs` / `.cjs` / `.mts` / `.cts`（沿用现有 TS/JS 静态解析） | ✅ 工作树开发版；不宣称完整 CommonJS 推断 |
+| Java / C / C++ / Python / PowerShell 源码 AST | ✅ 0.4.1-dev；有界静态声明与引用，错误和动态调用保留；[边界](docs/source-frontends.md) |
+| 普通 CLASS / JAR 原生读取、资源哈希与 JVM 描述符关系 | ✅ 0.4.1-dev；不需要 Java 运行时，不执行输入；[格式与边界](docs/jvm-facts.md)，不是反编译器 |
 | prefab / scene（GameObject 层级、m_Script、嵌套 prefab、guid 引用） | ✅ |
 | shader（Shader / property / include / multi_compile 关键字 / HLSL 函数） | ✅ |
 | 媒体资产（图片宽高、音频采样率/码率/时长、视频时长、字体名与字形数、Spine atlas/skel） | ✅ |
@@ -43,7 +46,7 @@ cargo install --path . --force
 codegraph233 version
 ```
 
-依赖 Rust 1.80+（开发机为 1.99）。`rusqlite` 使用 bundled 原生 SQLite，首次编译约 1–2 分钟。
+开发验证使用 Rust 1.99；尚未单独验证最低 Rust 版本。`rusqlite` 使用 bundled 原生 SQLite，首次编译约 1–2 分钟。
 
 ## 快速开始
 
@@ -109,7 +112,7 @@ codegraph233 update --mirror https://ghfast.top/   # 换镜像并持久化
 ```
 
 * `profile`：`full` / `game` / `code` / `minimal`；`features` 可按项覆盖。
-* `languages` 省略默认 `["csharp"]`；`["auto"]` 表示全部已实现前端（csharp / go / rust / typescript / lua）。
+* `languages` 省略默认 `["csharp"]`；`["auto"]` 表示全部已实现前端（csharp / go / rust / typescript / lua）及 `jvm` 事实输入。
 * 索引产物：`.codegraph233/index.db`（gitignore，可重建）。schema 版本变化时 `index` 会自动重建，`status` 会提示 `stale schema`。
 * `codegraph233 compact`：`ANALYZE` + `VACUUM`，回收增量索引产生的空闲页。
 

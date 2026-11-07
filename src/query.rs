@@ -502,6 +502,11 @@ impl Engine {
             )
         });
         let db_bytes = std::fs::metadata(self.cfg.db_path()).map(|m| m.len()).unwrap_or(0);
+        let mut diagnostics = Vec::new();
+        let mut statement = self.store.conn.prepare("SELECT value FROM meta WHERE key LIKE 'diagnostic:%' ORDER BY key LIMIT 32").map_err(|e| e.to_string())?;
+        for value in statement.query_map([], |r| r.get::<_,String>(0)).map_err(|e| e.to_string())? {
+            if let Ok(value) = serde_json::from_str::<Value>(&value.map_err(|e| e.to_string())?) { diagnostics.push(value); }
+        }
         Ok(json!({
             "files": files, "symbols": symbols, "refs": refs, "edges": edges,
             "unresolved_refs": unresolved, "assets": assets, "asset_edges": asset_edges,
@@ -510,6 +515,10 @@ impl Engine {
             "indexed_at": self.store.get_meta("indexed_at"),
             "profile": self.cfg.raw.profile,
             "languages": self.cfg.languages(),
+            "reader_version":env!("CARGO_PKG_VERSION"),
+            "parser_version":self.store.get_meta("parser_version"),
+            "parse_errors":self.store.get_meta("parse_errors").parse::<usize>().unwrap_or(0),
+            "diagnostics_first_32":diagnostics,
         }))
     }
 
@@ -1063,7 +1072,7 @@ impl Engine {
         needles.dedup();
         needles.retain(|n| n.len() >= 3);
         let mut sql = String::from(
-            "SELECT root, path FROM files WHERE lang IN ('csharp','go','rust','typescript','lua')",
+            "SELECT root, path FROM files WHERE lang IN ('csharp','go','rust','typescript','lua','jvm','java','c','cpp','python','powershell')",
         );
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if !root.is_empty() {

@@ -1,4 +1,5 @@
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Symbol {
     pub key: String,
     pub lang: String,
@@ -15,7 +16,8 @@ pub struct Symbol {
     pub module: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Ref {
     pub src_key: String,
     pub name: String,
@@ -26,7 +28,8 @@ pub struct Ref {
     pub arity: i32,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Asset {
     pub key: String,
     pub root: String,
@@ -38,7 +41,8 @@ pub struct Asset {
     pub meta: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct AssetEdge {
     pub src: String,
     pub dst: String,
@@ -48,7 +52,8 @@ pub struct AssetEdge {
     pub line: i32,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct GuidRow {
     pub guid: String,
     pub path: String,
@@ -58,7 +63,8 @@ pub struct GuidRow {
 /// One file's parse result. `root`/`lang`/`errors` are diagnostics: the
 /// indexer takes those from the scan entry, but tooling and tests use them.
 #[allow(dead_code)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct FileParse {
     pub rel_path: String,
     pub root: String,

@@ -25,7 +25,7 @@ fn tool(name: &str, desc: &str, props: Value, required: Value) -> Value {
 fn tools() -> Vec<Value> {
     let mut defs = vec![
         tool("cg233_status", "Index status: profile, languages, counts, db path, schema freshness. Call first.", json!({}), json!([])),
-        tool("cg233_index", "Build or incrementally update the index (C#/Go/Rust/TS/Lua front-ends).", json!({
+        tool("cg233_index", "Build/update source and ordinary JVM bytecode graphs; preserves unresolved targets and parse diagnostics.", json!({
             "force": {"type":"boolean","description":"Re-parse every file"},
             "jobs": {"type":"integer","description":"Parallel workers"}
         }), json!([])),
@@ -157,7 +157,7 @@ fn call(default_cfg: &Config, name: &str, args: &Value) -> Result<Value, String>
         return Ok(json!({
             "files": stats.files, "changed": stats.changed, "removed": stats.removed,
             "symbols": stats.symbols, "refs": stats.refs, "edges": stats.edges,
-            "assets": stats.assets, "unresolved_refs": stats.unresolved,
+            "assets": stats.assets, "unresolved_refs": stats.unresolved, "parse_errors":stats.parse_errors,
             "elapsed_ms": stats.elapsed_ms,
         }));
     }
@@ -166,6 +166,7 @@ fn call(default_cfg: &Config, name: &str, args: &Value) -> Result<Value, String>
         return Ok(json!({
             "config": cfg.file.display().to_string(),
             "db": st.db, "exists": st.exists, "stale": st.stale,
+            "reader_version":env!("CARGO_PKG_VERSION"),"parser_version":st.parser_version,"parse_errors":st.parse_errors,
             "files": st.files, "symbols": st.symbols,
             "refs": st.refs, "edges": st.edges, "assets": st.assets,
             "guid_entries": st.guid_entries,
@@ -191,6 +192,9 @@ fn call(default_cfg: &Config, name: &str, args: &Value) -> Result<Value, String>
             let id = a_i64(args, "id", 0);
             let sym = eng.get_symbol(id)?;
             if a_bool(args, "include_source", true) {
+                  if sym["lang"] == "jvm" && !sym["path"].as_str().unwrap_or("").ends_with(".cg-jvm.jsonl") {
+                      return Ok(json!({"symbol":sym,"source":null,"source_unavailable":"Binary JVM input: descriptors/member identities are available; Java source was not recovered."}));
+                  }
                 let root = sym["root"].as_str().unwrap_or("");
                 let path = sym["path"].as_str().unwrap_or("");
                 let start = sym["start_line"].as_i64().unwrap_or(1) as i32;

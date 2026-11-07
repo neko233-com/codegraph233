@@ -43,7 +43,11 @@ pub struct RawConfig {
     pub features: FeatureSet,
     #[serde(default)]
     pub guid_map: Vec<String>,
+    #[serde(default = "jvm_release")]
+    pub jvm_release: u32,
 }
+
+pub fn jvm_release() -> u32 { 8 }
 
 fn one() -> i32 {
     1
@@ -243,6 +247,12 @@ impl Config {
                 "rust".into(),
                 "typescript".into(),
                 "lua".into(),
+                "jvm".into(),
+                "java".into(),
+                "c".into(),
+                "cpp".into(),
+                "python".into(),
+                "powershell".into(),
             ];
         }
         out.dedup();
@@ -250,7 +260,7 @@ impl Config {
     }
 
     pub fn language_enabled(&self, lang: &str) -> bool {
-        self.languages().iter().any(|l| l == lang)
+        self.languages().iter().any(|l| l == lang || lang == "jvm" && l == "java")
     }
 
     pub fn excludes(&self) -> Vec<String> {

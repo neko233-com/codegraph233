@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS refs (
   receiver_type TEXT, kind TEXT NOT NULL, namespace_hint TEXT, line INTEGER,
   arity INTEGER DEFAULT -1, target INTEGER DEFAULT 0, confidence INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS idx_refs_file ON refs(file_id);
+CREATE INDEX IF NOT EXISTS idx_refs_unresolved ON refs(id) WHERE COALESCE(target,0)=0;
 CREATE TABLE IF NOT EXISTS edges (
   src INTEGER NOT NULL, dst INTEGER NOT NULL, kind TEXT NOT NULL, line INTEGER,
   confidence INTEGER DEFAULT 0);

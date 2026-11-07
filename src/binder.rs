@@ -5,6 +5,7 @@ pub struct Binder {
     rows: Vec<SymbolRow>,
     by_qual: HashMap<String, Vec<usize>>,
     by_name: HashMap<String, Vec<usize>>,
+    powershell_by_name: HashMap<String, Vec<usize>>,
     by_container_name: HashMap<String, Vec<usize>>,
     by_ns_name: HashMap<String, Vec<usize>>,
     type_by_simple: HashMap<String, Vec<usize>>,
@@ -22,6 +23,7 @@ impl Binder {
         let mut b = Binder {
             by_qual: HashMap::new(),
             by_name: HashMap::new(),
+            powershell_by_name: HashMap::new(),
             by_container_name: HashMap::new(),
             by_ns_name: HashMap::new(),
             type_by_simple: HashMap::new(),
@@ -32,6 +34,9 @@ impl Binder {
         for (i, s) in b.rows.iter().enumerate() {
             b.by_qual.entry(s.qualname.clone()).or_default().push(i);
             b.by_name.entry(s.name.clone()).or_default().push(i);
+            if s.lang == "powershell" {
+                b.powershell_by_name.entry(s.name.to_ascii_lowercase()).or_default().push(i);
+            }
             if !s.container.is_empty() {
                 b.by_container_name
                     .entry(format!("{}|{}", s.container, s.name))
@@ -65,6 +70,33 @@ impl Binder {
         if r.name.is_empty() {
             return None;
         }
+        if r.kind == "dynamic-call" { return None; }
+        if src.lang == "powershell" {
+            let mut candidates: Vec<usize> = self.powershell_by_name.get(&r.name.to_ascii_lowercase())?.iter().copied()
+                .filter(|i| r.kind != "calls" || matches!(self.rows[*i].kind.as_str(),"function"|"method"|"constructor"))
+                .filter(|i| self.rows[*i].root == src.root).collect();
+            if !r.receiver_type.is_empty() {
+                candidates.retain(|i| self.rows[*i].container.eq_ignore_ascii_case(&r.receiver_type)
+                    || self.rows[*i].container.rsplit('.').next().unwrap_or("").eq_ignore_ascii_case(&r.receiver_type));
+            }
+            let local: Vec<usize> = candidates.iter().copied().filter(|i| self.rows[*i].namespace == src.namespace && self.rows[*i].container == src.container).collect();
+            if !local.is_empty() { candidates = local; }
+            return if candidates.len() == 1 { Some(Resolution { row:candidates[0], confidence:"exact" }) } else { None };
+        }
+        // JVM facts contain exact owner/name/descriptors. Never substitute a
+        // name/arity guess for a missing or ambiguous bytecode declaration.
+        if src.lang == "jvm" {
+            if r.kind == "dynamic-call" { return None; }
+            let candidates = self.by_qual.get(&r.name)?;
+            let mut matching: Vec<usize> = candidates.iter().copied()
+                .filter(|i| self.rows[*i].lang == "jvm").collect();
+            let local: Vec<usize> = matching.iter().copied()
+                .filter(|i| self.rows[*i].root == src.root).collect();
+            if !local.is_empty() { matching = local; }
+            return if matching.len() == 1 {
+                Some(Resolution { row: matching[0], confidence: "exact" })
+            } else { None };
+        }
         let want_callable = r.kind == "calls";
         let want_type = matches!(r.kind.as_str(), "constructs" | "inherits" | "embeds");
 
@@ -81,6 +113,9 @@ impl Binder {
         if !r.receiver_type.is_empty() {
             if let Some(res) = self.resolve_receiver(r, src, want_callable, want_type) {
                 return Some(res);
+            }
+            if matches!(src.lang.as_str(), "java"|"c"|"cpp"|"python") {
+                return None;
             }
         }
         if !src.container.is_empty() {
@@ -151,6 +186,25 @@ impl Binder {
         let rt = r.receiver_type.trim_start_matches('*');
         if rt.is_empty() {
             return None;
+        }
+        if matches!(src.lang.as_str(), "java"|"c"|"cpp"|"python") {
+            let mut owners = vec![rt.to_string()];
+            if !rt.contains('.') && !src.namespace.is_empty() {
+                owners.insert(0, format!("{}.{rt}",src.namespace));
+            }
+            for owner in &owners {
+                for candidates in [self.by_container_name.get(&format!("{owner}|{}",r.name)), self.by_ns_name.get(&format!("{owner}|{}",r.name))] {
+                    if let Some(i) = self.pick(candidates,r,src,want_callable,want_type) {
+                        return Some(Resolution { row:i, confidence:"type" });
+                    }
+                }
+            }
+            let types = self.type_by_simple.get(rt)?;
+            let types: Vec<_> = types.iter().filter(|i| self.rows[**i].lang == src.lang && self.rows[**i].root == src.root).collect();
+            if types.len() != 1 { return None; }
+            let owner = &self.rows[*types[0]].qualname;
+            return self.pick(self.by_container_name.get(&format!("{owner}|{}",r.name)),r,src,want_callable,want_type)
+                .map(|i| Resolution { row:i, confidence:"type" });
         }
         if rt.contains('/') || self.package_paths.contains(rt) {
             if let Some(i) = self.pick(
@@ -244,17 +298,23 @@ impl Binder {
             })
             .collect();
         if filtered.is_empty() {
+            if matches!(src.lang.as_str(),"java"|"c"|"cpp"|"python") { return None; }
             filtered = cands.clone();
         }
         let mut best = filtered[0];
         let mut best_score = self.score(best, r, src);
+        let mut ambiguous = false;
         for &i in &filtered[1..] {
             let s = self.score(i, r, src);
             if s > best_score {
                 best = i;
                 best_score = s;
+                ambiguous = false;
+            } else if s == best_score {
+                ambiguous = true;
             }
         }
+        if ambiguous && matches!(src.lang.as_str(),"java"|"c"|"cpp"|"python") { return None; }
         Some(best)
     }
 
