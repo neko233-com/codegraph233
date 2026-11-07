@@ -55,6 +55,7 @@ pub fn init(dir: &Path, backend: Option<&str>, profile: &str) -> Result<PathBuf,
         features: Default::default(),
         guid_map: Vec::new(),
         jvm_release: crate::config::jvm_release(),
+        c_annotations: Vec::new(),
     };
     let text = serde_json::to_string_pretty(&raw).map_err(|e| e.to_string())?;
     fs::write(&path, format!("{text}\n")).map_err(|e| e.to_string())?;

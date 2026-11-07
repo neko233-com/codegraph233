@@ -4,6 +4,44 @@ use crate::model::{symbol_key, FileParse, Ref, Symbol};
 use std::collections::{HashMap, HashSet};
 use tree_sitter::{Language, Node, Parser};
 
+fn normalize_c_linkage_guards(source: &[u8], parsed: &mut [u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(source) else {
+        return false;
+    };
+    static GUARDS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let pattern=GUARDS.get_or_init(||regex::Regex::new(r#"(?m)^[\t ]*#[\t ]*ifdef[\t ]+__cplusplus[\t ]*\r?\n(?P<body>[\t ]*(?:extern[\t ]+\"C\"[\t ]*\{|\})[\t ]*)\r?\n[\t ]*#[\t ]*endif[\t ]*(?:\r?\n|$)"#).unwrap());
+    let directives: HashSet<_> = crate::lexer::tokenize(source, Default::default())
+        .into_iter()
+        .filter(|t| source[t.start] == b'#')
+        .map(|t| t.start)
+        .collect();
+    let matched: Vec<_> = pattern
+        .captures_iter(text)
+        .filter(|c| {
+            c[0].find('#')
+                .is_some_and(|n| directives.contains(&(c.get(0).unwrap().start() + n)))
+        })
+        .collect();
+    if matched.len() != 2
+        || !matched[0]["body"].trim_start().starts_with("extern")
+        || matched[1]["body"].trim() != "}"
+    {
+        return false;
+    }
+    for capture in matched {
+        let all = capture.get(0).unwrap();
+        let body = capture.name("body").unwrap();
+        for range in [all.start()..body.start(), body.end()..all.end()] {
+            for byte in &mut parsed[range] {
+                if !matches!(*byte, b'\r' | b'\n') {
+                    *byte = b' ';
+                }
+            }
+        }
+    }
+    true
+}
+
 fn text<'a>(node: Node<'_>, source: &'a [u8]) -> &'a str {
     node.utf8_text(source).unwrap_or("")
 }
@@ -68,6 +106,7 @@ struct Context {
 }
 struct Extractor<'a> {
     source: &'a [u8],
+    parsed_source: &'a [u8],
     language: &'a str,
     result: FileParse,
     aliases: HashMap<String, String>,
@@ -87,7 +126,19 @@ impl Extractor<'_> {
         let line = node.start_position().row as i32 + 1;
         let key = symbol_key(qual, kind, line);
         if self.seen.insert(key.clone()) {
-            let start = node.start_byte();
+            let mut start = node.start_byte();
+            if matches!(self.language, "c" | "cpp") {
+                let line_start = self.source[..start]
+                    .iter()
+                    .rposition(|b| *b == b'\n')
+                    .map_or(0, |n| n + 1);
+                if self.parsed_source[line_start..start]
+                    .iter()
+                    .all(u8::is_ascii_whitespace)
+                {
+                    start = line_start;
+                }
+            }
             let end = node
                 .child_by_field_name("body")
                 .map(|n| n.start_byte())
@@ -315,7 +366,14 @@ impl Extractor<'_> {
                 } else {
                     "method"
                 };
-                let key = self.symbol(node, symbol_kind, short, &qual, scope, arity);
+                let declaration = if kind == "function_declarator" {
+                    node.parent()
+                        .filter(|p| matches!(p.kind(), "declaration" | "field_declaration"))
+                        .unwrap_or(node)
+                } else {
+                    node
+                };
+                let key = self.symbol(declaration, symbol_kind, short, &qual, scope, arity);
                 let mut variables = scope.variables.clone();
                 if !scope.owner.is_empty() {
                     variables.insert("self".into(), scope.owner.clone());
@@ -549,7 +607,18 @@ fn argument_count(node: Node<'_>) -> i32 {
         .unwrap_or(-1)
 }
 
+#[cfg(test)]
 pub fn parse(rel: &str, root: &str, lang: &str, source: &[u8]) -> FileParse {
+    parse_with_annotations(rel, root, lang, source, &[])
+}
+
+pub fn parse_with_annotations(
+    rel: &str,
+    root: &str,
+    lang: &str,
+    source: &[u8],
+    configured_annotations: &[String],
+) -> FileParse {
     let mut result = FileParse {
         rel_path: rel.into(),
         root: root.into(),
@@ -584,6 +653,9 @@ pub fn parse(rel: &str, root: &str, lang: &str, source: &[u8]) -> FileParse {
     // comments, string contents and the original source used for extraction.
     let mut normalized = source.to_vec();
     let mut annotations = HashSet::new();
+    if lang == "cpp" && normalize_c_linkage_guards(source, &mut normalized) {
+        annotations.insert("__cplusplus C-linkage guards".into());
+    }
     if matches!(lang, "c" | "cpp") {
         for token in crate::lexer::tokenize(
             source,
@@ -602,7 +674,10 @@ pub fn parse(rel: &str, root: &str, lang: &str, source: &[u8]) -> FileParse {
                     | b"APIENTRY"
                     | b"CALLBACK"
                     | b"NTAPI"
-            ) {
+            ) || configured_annotations
+                .iter()
+                .any(|annotation| annotation.as_bytes() == name)
+            {
                 annotations.insert(String::from_utf8_lossy(name).into_owned());
                 normalized[token.start..token.end].fill(b' ');
             }
@@ -631,6 +706,7 @@ pub fn parse(rel: &str, root: &str, lang: &str, source: &[u8]) -> FileParse {
     }
     let mut extractor = Extractor {
         source,
+        parsed_source: &normalized,
         language: lang,
         result,
         aliases: HashMap::new(),
@@ -824,6 +900,31 @@ mod tests {
             .refs
             .iter()
             .any(|r| r.name == "onClass" && r.line == 4));
+    }
+    #[test]
+    fn split_cpp_c_linkage_guards_preserve_real_header_members_and_original_lines() {
+        let source=b"#ifndef API_H\n#define API_H\n#ifdef __cplusplus\nextern \"C\" {\n#endif\nstruct Handle;\nSE_API int SE_CALL begin(Handle *handle);\n#ifdef __cplusplus\n}\n#endif\n#endif\n";
+        let parsed = parse_with_annotations(
+            "api.h",
+            "native",
+            "cpp",
+            source,
+            &["SE_API".into(), "SE_CALL".into()],
+        );
+        assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        let begin = parsed.symbols.iter().find(|s| s.name == "begin").unwrap();
+        assert_eq!(begin.start_line, 7);
+        assert!(begin.signature.contains("SE_API int SE_CALL"));
+        assert!(begin.modifiers.contains("C-linkage guards"));
+        let mut copy = source.to_vec();
+        assert!(normalize_c_linkage_guards(source, &mut copy));
+        assert_eq!(copy.len(), source.len());
+        assert_eq!(
+            copy.iter().filter(|b| **b == b'\n').count(),
+            source.iter().filter(|b| **b == b'\n').count()
+        );
+        let comment = [b"/*\n".as_slice(), source, b"*/\n".as_slice()].concat();
+        assert!(!normalize_c_linkage_guards(&comment, &mut comment.clone()));
     }
     #[cfg(windows)]
     #[test]

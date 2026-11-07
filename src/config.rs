@@ -45,6 +45,10 @@ pub struct RawConfig {
     pub guid_map: Vec<String>,
     #[serde(default = "jvm_release")]
     pub jvm_release: u32,
+    /// Explicit declaration annotations from this project's C/C++ headers.
+    /// Names only: no replacement text or preprocessor execution.
+    #[serde(default)]
+    pub c_annotations: Vec<String>,
 }
 
 pub fn jvm_release() -> u32 { 8 }
@@ -113,6 +117,11 @@ pub fn load(start: &Path) -> Result<Config, String> {
     let text = std::fs::read_to_string(&file).map_err(|e| format!("read config: {e}"))?;
     let mut raw: RawConfig =
         serde_json::from_str(&text).map_err(|e| format!("parse config: {e}"))?;
+    if raw.c_annotations.len() > 32 || raw.c_annotations.iter().any(|name| {
+        name.is_empty() || name.len() > 64 || !name.bytes().enumerate().all(|(i,b)| b == b'_' || b.is_ascii_alphabetic() || (i > 0 && b.is_ascii_digit()))
+    }) {
+        return Err("c_annotations requires at most 32 C identifier names of 1-64 ASCII bytes".into());
+    }
     if raw.roots.is_empty() {
         raw.roots.push(Root {
             key: "client".into(),

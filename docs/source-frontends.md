@@ -24,6 +24,18 @@ leave missing/ambiguous relationships. Python dynamic imports, PowerShell module
 execution, reflection, function-pointer targets and complete CommonJS inference
 are not performed. Verify critical relationships against source.
 
+For actual header-declared export/calling annotations, a project may explicitly
+set `"c_annotations": ["SE_API", "SE_CALL"]`. At most 32 ASCII identifier names
+of 1-64 bytes are accepted. Only matching identifier tokens are masked; source
+strings/comments/directives remain intact, signatures retain the original
+annotation prefix, and configuration changes invalidate prior diagnostics.
+There is no replacement expression, macro expansion or compiler execution.
+Without this configuration, unknown annotation errors remain visible.
+A matched pair of split `#ifdef __cplusplus` / `extern "C" {` and closing
+linkage guards is normalized for C++ headers while preserving source byte/line
+positions. Comment-contained or unmatched patterns are retained. This is not
+general conditional compilation.
+
 New AST inputs have a 16 MiB source limit, two-second parser budget, two-million
 node budget and depth bound 256. `cg233_project_health` reports reader/parser
 versions, persistent `parse_errors` and the first 32 per-file diagnostics.
@@ -56,3 +68,11 @@ launcher archive matched independent ASM: 27 classes, 930 methods, 105 fields,
 12,441 direct invocations and 72 member hashes; 8,735 dynamic sites unresolved.
 Raw third-party artifacts are not shipped. These checks do not establish editor
 business-source recovery, application acceptance or support for every language.
+
+Follow-up validation: explicit project annotations, configuration invalidation,
+original declaration prefixes, and real split C-linkage header members passed
+targeted tests (two annotation tests, then five source-frontend tests). Two
+intermediate signature assertions failed and were corrected before installation.
+The final real SpineEditorX index includes the native codec C/header and complete
+tooling directories: 1,987 files, zero parse diagnostics. Existing unrelated
+passing tests were not repeatedly executed.

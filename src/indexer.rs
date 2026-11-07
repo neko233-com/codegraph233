@@ -207,7 +207,7 @@ fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
         "java" | "c" | "cpp" | "python" | "powershell" => match std::fs::read(&f.abs) {
-            Ok(data) => crate::source_ast::parse(&f.rel, &f.root, &f.lang, &data),
+            Ok(data) => crate::source_ast::parse_with_annotations(&f.rel, &f.root, &f.lang, &data, &cfg.raw.c_annotations),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
         "prefab" => match std::fs::read_to_string(&f.abs) {
@@ -273,7 +273,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full2";
+const PARSER_VERSION: &str = "0.4.1-full4";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -827,6 +827,31 @@ mod tests {
         assert!(removed.unresolved > repaired.unresolved);
         let idle=run(&cfg,&opts()).unwrap();
         assert_eq!(idle.unresolved,removed.unresolved);
+        let _=fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn explicit_c_annotations_fix_real_declarations_and_invalidate_cached_errors() {
+        let dir = temp_project("c-annotations");
+        fs::remove_file(dir.join("A.cs")).unwrap();
+        fs::remove_file(dir.join("B.cs")).unwrap();
+        let config = r#"{"version":1,"profile":"code","roots":[{"key":"app","path":"."}],"languages":["c"]}"#;
+        write(&dir.join(".codegraph233.json"),config);
+        write(&dir.join("codec.c"),"#define SE_API __declspec(dllexport)\n#define SE_CALL __cdecl\nstatic int work(void) { return 43; }\nSE_API int SE_CALL codec_begin(void) { return work(); }\n");
+        let cfg=config::load(&dir).unwrap();
+        assert!(run(&cfg,&opts()).unwrap().parse_errors > 0);
+        write(&dir.join(".codegraph233.json"), &config.replace("\"languages\":[\"c\"]", "\"languages\":[\"c\"],\"c_annotations\":[\"SE_API\",\"SE_CALL\"]"));
+        let cfg=config::load(&dir).unwrap();
+        assert!(status(&cfg).stale);
+        let parsed=run(&cfg,&opts()).unwrap();
+        assert_eq!(parsed.parse_errors,0);
+        assert!(edge_set(&cfg.db_path()).contains(&("codec_begin".into(),"work".into(),"calls".into())));
+        let store=Store::open(&cfg.db_path(),false).unwrap();
+        let signature:String=store.conn.query_row("SELECT signature FROM symbols WHERE name='codec_begin'",[],|r|r.get(0)).unwrap();
+        assert!(signature.contains("SE_API") && signature.contains("SE_CALL"));
+        drop(store);
+        write(&dir.join(".codegraph233.json"),&config.replace("\"languages\":[\"c\"]","\"languages\":[\"c\"],\"c_annotations\":[\"not a macro\"]"));
+        assert!(config::load(&dir).unwrap_err().contains("c_annotations"));
         let _=fs::remove_dir_all(dir);
     }
 }

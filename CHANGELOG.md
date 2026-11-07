@@ -2,6 +2,9 @@
 
 ## 0.4.1-dev — unreleased
 
+- Add bounded, explicit project `c_annotations` for real native headers. Preserve
+  annotation prefixes in original signatures and invalidate cached parse errors.
+
 - Index `.mjs`, `.cjs`, `.mts` and `.cts` directly and normalize relative imports;
   content-copy views are no longer needed for those extensions.
 - Add bounded tree-sitter Java/C/C++/Python/PowerShell source graphs, Python
