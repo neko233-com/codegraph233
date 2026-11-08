@@ -2,6 +2,14 @@
 
 ## 0.4.1-dev — unreleased
 
+- Index design, narrative and media inputs: Markdown design docs with `@id`
+  requirements and `@code`/`@asset`/`@audio`/`@video`/`@art`/`@story`/`@value`
+  markers (plus `[[...]]` links) become a requirement graph; `@design:`/`@spec:`/
+  `@doc:` code comments emit `implements` edges back from source files. Index
+  Yarn and Ink scripts (nodes/knots/tags/options and jump targets), `.srt`/`.vtt`
+  subtitles and `.webm`/`.mkv` EBML headers without executing scripts or decoding
+  payloads. Add the `cg233_design_graph` MCP tool (26 total) and five registry
+  entries.
 - Index art and audio pipeline assets: Unity AudioMixer groups/snapshots/effects
   with `routes_to` routing; Wwise workunits/projects/bank/media headers; FMOD
   project/string-table/FSB5 banks; glTF/GLB nodes, meshes, materials, textures,

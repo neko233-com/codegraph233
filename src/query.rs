@@ -58,6 +58,22 @@ const ART_GRAPH_KINDS: &[&str] = &[
     "shader",
 ];
 
+const DESIGN_GRAPH_KINDS: &[&str] = &[
+    "design_doc",
+    "design_section",
+    "design_requirement",
+    "yarn_script",
+    "yarn_node",
+    "yarn_tag",
+    "yarn_option",
+    "ink_script",
+    "ink_knot",
+    "ink_stitch",
+    "ink_tag",
+    "subtitle",
+    "video",
+];
+
 impl Engine {
     pub fn open(cfg: &Config) -> Result<Engine, String> {
         let store = Store::open(&cfg.db_path(), false)?;
@@ -489,6 +505,15 @@ impl Engine {
         limit: i64,
     ) -> Result<Value, String> {
         self.pipeline_graph("art", ART_GRAPH_KINDS, root, asset, limit)
+    }
+
+    pub fn design_graph(
+        &self,
+        root: Option<&str>,
+        asset: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        self.pipeline_graph("design", DESIGN_GRAPH_KINDS, root, asset, limit)
     }
 
     fn pipeline_graph(

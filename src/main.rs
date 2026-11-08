@@ -2,6 +2,7 @@ mod assets;
 mod binder;
 mod config;
 mod csharp;
+mod design_docs;
 mod engine_assets;
 mod go_lang;
 mod indexer;

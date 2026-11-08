@@ -4,8 +4,9 @@ This is an unreleased local development version, separate from stable 0.4.0.
 `languages: ["auto"]` enables C#, Go, Rust, TypeScript/JavaScript, Lua (and
 Luau), Java, Kotlin, GDScript, Swift, Objective-C, Dart, Haxe, GameMaker GML,
 C, C++, Python, PowerShell, HLSL/GLSL/Metal/WGSL source graphs and JVM
-bytecode. Existing asset/configuration frontends remain controlled by project
-profile/features.
+bytecode, plus design/narrative/media assets (Markdown design docs, Yarn/Ink
+scripts, subtitles and WebM/Matroska headers). Existing asset/configuration
+frontends remain controlled by project profile/features.
 
 | Input | Implementation and scope |
 | --- | --- |
@@ -38,6 +39,11 @@ profile/features.
 | `.gltf`, `.glb` | glTF scenes: nodes, meshes, materials, textures, images, animations and skins, with material/texture/URI edges |
 | `.ase`, `.aseprite` | Aseprite layers and tags read from binary frame/chunk headers |
 | `.fbx` | FBX header only: `Kaydara FBX Binary` magic + version, or ASCII `; FBX` banner |
+| `.md`, `.markdown` | Design docs: front matter, headings, `@id` requirements, `@code`/`@asset`/`@audio`/`@video`/`@art`/`@story`/`@value` markers and `[[...]]` links; repo docs such as README/CHANGELOG are skipped |
+| `.yarn` | Yarn nodes, `#tags`, options and `<<jump>>` target edges |
+| `.ink` | Ink knots, stitches, tags, choices and `-> knot` target edges |
+| `.srt`, `.vtt` | Subtitle cue count, duration and first text; no media decoding |
+| `.webm`, `.mkv` | EBML header only: WebM/Matroska container probe; no tracks or payloads |
 | `Packages/manifest.json`, `packages-lock.json` | Unity UPM package dependency graph |
 
 These are static navigation aids, not complete compilers, type checkers, macro
@@ -124,6 +130,19 @@ and `packages-lock.json` become `upm_manifest`/`upm_lock` assets with
 diagnostic bounds as other asset frontends, and `.shader` files still use the
 ShaderLab asset parser.
 
+Design and narrative inputs close the loop from planning to implementation.
+Markdown design docs use a small, static marker dialect: `@id: REQ-X` declares a
+requirement, and `@code: path#symbol`, `@asset:`, `@audio:`, `@video:`, `@art:`,
+`@story: path#node`, `@value: table#key` and `@link: REQ-Y` (or `[[REQ-Y]]`)
+become typed `design_*` edges; headings become `design_section` assets. Code
+comments using `@design:`, `@spec:` or `@doc:` emit `implements` edges from the
+source file to the referenced requirement, so a requirement can be traced to
+code, assets, audio, video, art, story and config values in either direction.
+Yarn and Ink scripts are parsed statically (nodes/knots/tags/options and jump
+targets); scripts are never executed. Subtitles are text-only, and `.webm`/`.mkv`
+inputs are header-level views. Repository docs such as README, CHANGELOG,
+LICENSE and contribution guides are deliberately not indexed as design docs.
+
 `codegraph233 languages` prints the canonical registry (id, backend, extensions,
 strict/dynamic/asset mode). Projects can add custom extension mappings with
 `extra_extensions`, e.g. `{"extra_extensions": {"gd2": "gdscript"}}`; keys are
@@ -157,8 +176,12 @@ test, two indexer integration/mapping tests, one Unreal macro-masking source
 test and one auto-update settings test. The art/audio pipeline work adds 8 more:
 seven parser tests (Unity mixer, Wwise workunit/bank, FMOD project/strings/FSB5,
 glTF, GLB, Aseprite, FBX/UPM) and one indexer integration test covering mixer
-routing, Wwise/FMOD banks, glTF material edges and UPM packages. The full suite
-is 71 tests passing on Windows x64/Rust 1.99. A synthetic 10-file project with
+routing, Wwise/FMOD banks, glTF material edges and UPM packages. The
+design/narrative work adds 7 more: six frontend tests (design markers and
+links, Yarn nodes, Ink knots, subtitles, WebM headers, code annotations) and one
+indexer integration test covering requirements, code `implements` edges, Yarn/Ink
+jumps and subtitle/video assets. The full suite
+is 78 tests passing on Windows x64/Rust 1.99. A synthetic 10-file project with
 `languages: ["auto"]`
 was indexed end-to-end (zero parse diagnostics, all 22 frontends enabled), and
 the existing `testdata/multi` fixture re-indexed without regressions in its C#,
@@ -168,7 +191,11 @@ project (`.uproject`, `.uplugin`, `DefaultEngine.ini`, a header-level `.uasset`,
 parse diagnostics and the expected module/plugin/`/Game/`/main-scene/autoload
 asset edges. A synthetic audio/art project (Unity mixer, Wwise workunit and
 glTF scene) indexed with zero diagnostics, and `cg233_audio_graph` /
-`cg233_art_graph` returned the expected assets and edges over MCP stdio. A real
+`cg233_art_graph` returned the expected assets and edges over MCP stdio. A
+synthetic design project (Markdown requirement with `@code`/`@story` markers,
+Yarn nodes, subtitle and WebM header) indexed with zero diagnostics, and
+`cg233_design_graph` returned 9 assets / 12 edges including `implements`,
+`design_code`, `design_story` and `jumps_to` over MCP stdio. A real
 third-party project mixing these new languages was not used
 for this validation. Raw third-party artifacts are not shipped. These checks do
 not establish editor business-source recovery, application acceptance or support

@@ -40,6 +40,24 @@ struct ScanFile {
     mtime: i64,
 }
 
+fn is_repo_doc(rel: &str) -> bool {
+    let name = rel
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(rel)
+        .to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "readme.md"
+            | "changelog.md"
+            | "license.md"
+            | "contributing.md"
+            | "security.md"
+            | "code_of_conduct.md"
+            | "agents.md"
+    )
+}
+
 fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static str> {
     let ext = Path::new(rel)
         .extension()
@@ -103,6 +121,11 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         {
             Some("upm_manifest")
         }
+        "md" | "markdown" if f.assets && !is_repo_doc(rel) => Some("design_doc"),
+        "yarn" if f.assets => Some("yarn_script"),
+        "ink" if f.assets => Some("ink_script"),
+        "srt" | "vtt" if f.assets => Some("subtitle"),
+        "webm" | "mkv" if f.assets => Some("video"),
         "xlsx" | "csv" | "tsv" if f.config_tables => Some("config"),
         "json" if f.config_tables => {
             let abs = Path::new(rel);
@@ -214,6 +237,21 @@ fn go_module_of(abs: &Path) -> String {
 }
 
 fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
+    let mut fp = parse_file_inner(f, cfg);
+    if crate::config::is_code_lang(&f.lang) && f.lang != "jvm" {
+        if let Ok(data) = std::fs::read(&f.abs) {
+            if let Ok(text) = std::str::from_utf8(&data) {
+                if text.contains("@design:") || text.contains("@spec:") || text.contains("@doc:") {
+                    fp.asset_edges
+                        .extend(crate::design_docs::code_markers(&f.rel, &f.root, text));
+                }
+            }
+        }
+    }
+    fp
+}
+
+fn parse_file_inner(f: &ScanFile, cfg: &Config) -> FileParse {
     match f.lang.as_str() {
         "csharp" => match std::fs::read(&f.abs) {
             Ok(data) => crate::csharp::parse(&f.rel, &f.root, &data, cfg.features.type_deps),
@@ -267,6 +305,10 @@ fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
         }
         "ue_asset" => match std::fs::read(&f.abs) {
             Ok(data) => crate::engine_assets::parse_uasset(&f.rel, &f.root, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
+        "design_doc" | "yarn_script" | "ink_script" | "subtitle" | "video" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::design_docs::parse(&f.rel, &f.root, &f.lang, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
         "unity_mixer" | "wwise_workunit" | "wwise_project" | "wwise_bank" | "wwise_media"
@@ -338,7 +380,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full8";
+const PARSER_VERSION: &str = "0.4.1-full9";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -1228,6 +1270,85 @@ mod tests {
         for kind in ["routes_to", "uses_material", "references"] {
             assert!(edges.iter().any(|e| e.2 == kind), "missing edge {kind}: {edges:?}");
         }
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn indexes_design_docs_narrative_and_code_markers() {
+        let dir = temp_project("design");
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#,
+        );
+        write(
+            &dir.join("docs/Combat.md"),
+            "---\ntitle: Combat\n---\n# Combat\n@id: REQ-COMBAT\n@code: src/Combat.cs#damage\n@audio: Audio/hit.wav\n@story: Story/quest.yarn#start\nSee [[REQ-UI]].\n",
+        );
+        write(
+            &dir.join("src/Combat.cs"),
+            "namespace Demo {\n  // @design:REQ-COMBAT\n  class Combat { void damage() {} }\n}\n",
+        );
+        write(
+            &dir.join("Story/quest.yarn"),
+            "title: start\n---\nHello #greeting\n<<jump ending>>\n===\ntitle: ending\n---\nBye\n",
+        );
+        write(&dir.join("Story/branch.ink"), "=== start ===\n-> ending\n=== ending ===\n");
+        write(
+            &dir.join("Media/sub.srt"),
+            "1\n00:00:01,000 --> 00:00:02,000\nHi\n",
+        );
+        write_bytes(&dir.join("Media/trailer.webm"), b"\x1A\x45\xDF\xA3webm");
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+        let store = Store::open(&cfg.db_path(), false).unwrap();
+        let kinds: Vec<String> = store
+            .conn
+            .prepare("SELECT DISTINCT kind FROM assets")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .flatten()
+            .collect();
+        for kind in [
+            "design_doc",
+            "design_section",
+            "design_requirement",
+            "yarn_script",
+            "yarn_node",
+            "ink_script",
+            "ink_knot",
+            "subtitle",
+            "video",
+        ] {
+            assert!(kinds.iter().any(|k| k == kind), "missing {kind}: {kinds:?}");
+        }
+        let edges: Vec<(String, String, String)> = store
+            .conn
+            .prepare("SELECT src, dst, kind FROM asset_edges")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        for kind in [
+            "design_code",
+            "design_audio",
+            "design_story",
+            "design_link",
+            "implements",
+            "jumps_to",
+        ] {
+            assert!(edges.iter().any(|e| e.2 == kind), "missing edge {kind}: {edges:?}");
+        }
+        assert!(edges.iter().any(|e| e.0 == "asset:app:src/Combat.cs"
+            && e.1 == "design:app:REQ-COMBAT"
+            && e.2 == "implements"));
+        assert!(edges.iter().any(|e| e.0 == "design:app:REQ-COMBAT"
+            && e.1 == "asset:app:src/Combat.cs"
+            && e.2 == "design_code"));
         drop(store);
         let _ = fs::remove_dir_all(&dir);
     }

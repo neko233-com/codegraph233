@@ -201,6 +201,36 @@ pub const SPECS: &[LangSpec] = &[
         extensions: &["fbx"],
         strict: false,
     },
+    LangSpec {
+        id: "design_doc",
+        backend: Backend::Asset,
+        extensions: &["md", "markdown"],
+        strict: false,
+    },
+    LangSpec {
+        id: "yarn_script",
+        backend: Backend::Asset,
+        extensions: &["yarn"],
+        strict: false,
+    },
+    LangSpec {
+        id: "ink_script",
+        backend: Backend::Asset,
+        extensions: &["ink"],
+        strict: false,
+    },
+    LangSpec {
+        id: "subtitle",
+        backend: Backend::Asset,
+        extensions: &["srt", "vtt"],
+        strict: false,
+    },
+    LangSpec {
+        id: "video",
+        backend: Backend::Asset,
+        extensions: &["webm", "mkv"],
+        strict: false,
+    },
     // Path-based frontends expose no extension of their own.
     LangSpec {
         id: "upm_manifest",
