@@ -2,7 +2,7 @@
 
 **AST GraphRAG for game projects — Rust 实现。**
 
-索引 C# / Go / Rust / TypeScript / JavaScript / Lua / Java / C / C++ / Python / PowerShell 源码、普通 CLASS/JAR、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
+索引 C# / Go / Rust / TypeScript / JavaScript / Lua / Java / C / C++ / Python / PowerShell / GDScript / Kotlin / Swift / Objective-C / Dart / Haxe / GameMaker GML / HLSL / GLSL / Metal / WGSL 源码、普通 CLASS/JAR、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
 
 ## 能力（Rust 实现）
 
@@ -13,8 +13,12 @@
 | Rust 前端（mod / struct / enum / trait / impl / fn / use 别名） | ✅ |
 | TypeScript 前端（class / interface / enum / function / import 别名 / extends / implements） | ✅ |
 | Lua 前端（模块函数 / `a.b` 与 `a:b` 方法 / local 函数与表 / require / 调用） | ✅ |
+| Luau（`.luau`，复用 Lua 前端） | ✅ |
 | Node 模块扩展名 `.mjs` / `.cjs` / `.mts` / `.cts`（沿用现有 TS/JS 静态解析） | ✅ 工作树开发版；不宣称完整 CommonJS 推断 |
 | Java / C / C++ / Python / PowerShell 源码 AST | ✅ 0.4.1-dev；有界静态声明与引用，错误和动态调用保留；[边界](docs/source-frontends.md) |
+| GDScript / Kotlin / Swift / Objective-C / Dart 源码 AST | ✅ 0.4.1-dev；tree-sitter 语法；类 / 方法 / 字段 / 枚举 / 构造 / 调用 / 继承；错误可见；[边界](docs/source-frontends.md) |
+| Haxe / GameMaker GML 源码前端 | ✅ 0.4.1-dev；词法级类型 / 字段 / 方法 / 构造器 / 调用；GML 支持 constructor 与静态方法 |
+| HLSL / GLSL / Metal / WGSL 源码前端 | ✅ 0.4.1-dev；函数 / struct / 调用；含 `.usf` / `.ush` / `.cg` / `.gdshader`；`.shader` 仍走资产解析器（properties / include / 关键字） |
 | 普通 CLASS / JAR 原生读取、资源哈希与 JVM 描述符关系 | ✅ 0.4.1-dev；不需要 Java 运行时，不执行输入；[格式与边界](docs/jvm-facts.md)，不是反编译器 |
 | prefab / scene（GameObject 层级、m_Script、嵌套 prefab、guid 引用） | ✅ |
 | shader（Shader / property / include / multi_compile 关键字 / HLSL 函数） | ✅ |
@@ -112,7 +116,7 @@ codegraph233 update --mirror https://ghfast.top/   # 换镜像并持久化
 ```
 
 * `profile`：`full` / `game` / `code` / `minimal`；`features` 可按项覆盖。
-* `languages` 省略默认 `["csharp"]`；`["auto"]` 表示全部已实现前端（csharp / go / rust / typescript / lua）及 `jvm` 事实输入。
+* `languages` 省略默认 `["csharp"]`；`["auto"]` 表示全部已实现前端（`CODE_LANGUAGES`：csharp / go / rust / typescript / lua / jvm / java / c / cpp / python / powershell / gdscript / kotlin / swift / objc / dart / haxe / gml / hlsl / glsl / metal / wgsl）。
 * 索引产物：`.codegraph233/index.db`（gitignore，可重建）。schema 版本变化时 `index` 会自动重建，`status` 会提示 `stale schema`。
 * `codegraph233 compact`：`ANALYZE` + `VACUUM`，回收增量索引产生的空闲页。
 

@@ -80,6 +80,19 @@ pub struct Config {
     pub features: Features,
 }
 
+/// Code languages with a dedicated source frontend. `jvm` covers CLASS/JAR
+/// bytecode; the rest are source ASTs.
+pub const CODE_LANGUAGES: &[&str] = &[
+    "csharp", "go", "rust", "typescript", "lua", "jvm", "java", "c", "cpp",
+    "python", "powershell", "gdscript", "kotlin", "swift", "objc", "dart",
+    "haxe", "gml", "hlsl", "glsl", "metal", "wgsl",
+];
+
+/// True for language ids that are parsed as source code (not assets/configs).
+pub fn is_code_lang(lang: &str) -> bool {
+    CODE_LANGUAGES.contains(&lang)
+}
+
 pub const DEFAULT_EXCLUDE: &[&str] = &[
     ".git", ".svn", ".hg", "Library", "Temp", "Logs", "obj", "Build", "Builds",
     "node_modules", ".codely-cli", ".codex", ".cursor", ".codegraph233",
@@ -250,19 +263,7 @@ impl Config {
             return vec!["csharp".into()];
         }
         if out.iter().any(|s| s == "auto") {
-            return vec![
-                "csharp".into(),
-                "go".into(),
-                "rust".into(),
-                "typescript".into(),
-                "lua".into(),
-                "jvm".into(),
-                "java".into(),
-                "c".into(),
-                "cpp".into(),
-                "python".into(),
-                "powershell".into(),
-            ];
+            return CODE_LANGUAGES.iter().map(|s| s.to_string()).collect();
         }
         out.dedup();
         out
@@ -297,4 +298,46 @@ pub fn is_excluded(rel: &str, base: &str, excludes: &[String]) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("cg233-config-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn auto_languages_cover_every_code_frontend() {
+        let dir = temp_dir("auto");
+        std::fs::write(
+            dir.join(CONFIG_NAME),
+            r#"{"version":1,"profile":"code","languages":["auto"]}"#,
+        )
+        .unwrap();
+        let cfg = load(&dir).unwrap();
+        let langs = cfg.languages();
+        for lang in CODE_LANGUAGES {
+            assert!(langs.iter().any(|l| l == lang), "auto must enable {lang}");
+        }
+        assert!(cfg.language_enabled("jvm"));
+        assert!(cfg.language_enabled("gdscript"));
+        assert!(cfg.language_enabled("wgsl"));
+        assert!(is_code_lang("kotlin"));
+        assert!(!is_code_lang("prefab"));
+    }
+
+    #[test]
+    fn empty_languages_default_to_csharp_only() {
+        let dir = temp_dir("empty");
+        std::fs::write(dir.join(CONFIG_NAME), r#"{"version":1,"profile":"code"}"#).unwrap();
+        let cfg = load(&dir).unwrap();
+        assert_eq!(cfg.languages(), vec!["csharp".to_string()]);
+        assert!(!cfg.language_enabled("jvm"));
+        assert!(!cfg.language_enabled("rust"));
+    }
 }

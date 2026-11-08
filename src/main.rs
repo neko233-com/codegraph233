@@ -10,6 +10,7 @@ mod source_ast;
 mod quiet;
 mod powershell_ast;
 mod lexer;
+mod lexer_langs;
 mod lua_lang;
 mod mcp;
 mod model;
@@ -18,6 +19,7 @@ mod query;
 mod rust_lang;
 mod setup;
 mod store;
+mod tree_langs;
 mod ts_lang;
 mod update;
 

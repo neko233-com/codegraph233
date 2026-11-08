@@ -347,6 +347,20 @@ impl<'a> Cursor<'a> {
             0
         }
     }
+    /// Raw source text between two tokens. Unlike `raw_text`, this keeps the
+    /// original spacing and any skipped payload (string literals never become
+    /// tokens), which is what argument counting needs.
+    pub fn gap(&self, left: usize, right: usize) -> &str {
+        if left >= self.toks.len() || right >= self.toks.len() || right <= left {
+            return "";
+        }
+        let start = self.toks[left].end;
+        let end = self.toks[right].start;
+        if start >= end || end > self.src.len() {
+            return "";
+        }
+        std::str::from_utf8(&self.src[start..end]).unwrap_or("")
+    }
     pub fn match_close(&self, open: usize) -> usize {
         let mut depth = 0i32;
         for j in open..self.toks.len() {

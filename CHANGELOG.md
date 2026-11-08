@@ -2,6 +2,15 @@
 
 ## 0.4.1-dev — unreleased
 
+- Add bounded tree-sitter GDScript/Kotlin/Swift/Objective-C/Dart and lexical
+  Haxe/GameMaker GML/HLSL/GLSL/Metal/WGSL source graphs. Index `.gd`, `.kt`/`.kts`,
+  `.swift`, `.m`/`.mm`, `.dart`, `.hx`, `.gml`, `.hlsl`/`.cginc`/`.compute`/
+  `.usf`/`.ush`/`.cg`, `.glsl`/`.vert`/`.frag`/`.geom`/`.comp`/`.tesc`/`.tese`/
+  `.gdshader`, `.metal`, `.wgsl` and
+  `.luau` (via Lua); `languages: ["auto"]` now covers every implemented code
+  frontend. Count call arity from raw source so string-only arguments resolve,
+  and keep statically typed receivers strict while GDScript/GML stay dynamic.
+  Kotlin grammar recovery is reported as diagnostics, not hidden.
 - Add bounded, explicit project `c_annotations` for real native headers. Preserve
   annotation prefixes in original signatures and invalidate cached parse errors.
 

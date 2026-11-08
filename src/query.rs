@@ -1071,8 +1071,13 @@ impl Engine {
         needles.sort();
         needles.dedup();
         needles.retain(|n| n.len() >= 3);
-        let mut sql = String::from(
-            "SELECT root, path FROM files WHERE lang IN ('csharp','go','rust','typescript','lua','jvm','java','c','cpp','python','powershell')",
+        let language_list = crate::config::CODE_LANGUAGES
+            .iter()
+            .map(|lang| format!("'{lang}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut sql = format!(
+            "SELECT root, path FROM files WHERE lang IN ({language_list})"
         );
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if !root.is_empty() {

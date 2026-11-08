@@ -114,7 +114,7 @@ impl Binder {
             if let Some(res) = self.resolve_receiver(r, src, want_callable, want_type) {
                 return Some(res);
             }
-            if matches!(src.lang.as_str(), "java"|"c"|"cpp"|"python") {
+            if matches!(src.lang.as_str(), "java"|"c"|"cpp"|"python"|"kotlin"|"swift"|"objc"|"dart"|"haxe") {
                 return None;
             }
         }
@@ -187,7 +187,7 @@ impl Binder {
         if rt.is_empty() {
             return None;
         }
-        if matches!(src.lang.as_str(), "java"|"c"|"cpp"|"python") {
+        if matches!(src.lang.as_str(), "java"|"c"|"cpp"|"python"|"kotlin"|"swift"|"objc"|"dart"|"haxe") {
             let mut owners = vec![rt.to_string()];
             if !rt.contains('.') && !src.namespace.is_empty() {
                 owners.insert(0, format!("{}.{rt}",src.namespace));
@@ -298,7 +298,7 @@ impl Binder {
             })
             .collect();
         if filtered.is_empty() {
-            if matches!(src.lang.as_str(),"java"|"c"|"cpp"|"python") { return None; }
+            if matches!(src.lang.as_str(),"java"|"c"|"cpp"|"python"|"kotlin"|"swift"|"objc"|"dart"|"haxe") { return None; }
             filtered = cands.clone();
         }
         let mut best = filtered[0];
@@ -314,7 +314,7 @@ impl Binder {
                 ambiguous = true;
             }
         }
-        if ambiguous && matches!(src.lang.as_str(),"java"|"c"|"cpp"|"python") { return None; }
+        if ambiguous && matches!(src.lang.as_str(),"java"|"c"|"cpp"|"python"|"kotlin"|"swift"|"objc"|"dart"|"haxe") { return None; }
         Some(best)
     }
 

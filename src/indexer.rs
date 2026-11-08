@@ -60,8 +60,20 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts" if f.code => Some("typescript"),
         "jsonl" if f.code && rel.ends_with(".cg-jvm.jsonl") => Some("jvm"),
         "lua" if f.code => Some("lua"),
+        "luau" if f.code => Some("lua"),
+        "gd" if f.code => Some("gdscript"),
+        "kt" | "kts" if f.code => Some("kotlin"),
+        "swift" if f.code => Some("swift"),
+        "m" | "mm" if f.code => Some("objc"),
+        "dart" if f.code => Some("dart"),
+        "hx" if f.code => Some("haxe"),
+        "gml" if f.code => Some("gml"),
         "prefab" | "unity" if f.prefabs => Some("prefab"),
-        "shader" | "hlsl" | "cginc" | "compute" if f.shaders => Some("shader"),
+        "shader" if f.shaders => Some("shader"),
+        "hlsl" | "cginc" | "compute" | "usf" | "ush" | "cg" if f.code || f.shaders => Some("hlsl"),
+        "glsl" | "vert" | "frag" | "geom" | "comp" | "tesc" | "tese" | "gdshader" if f.code || f.shaders => Some("glsl"),
+        "metal" if f.code || f.shaders => Some("metal"),
+        "wgsl" if f.code || f.shaders => Some("wgsl"),
         "xlsx" | "csv" | "tsv" if f.config_tables => Some("config"),
         "json" if f.config_tables => {
             let abs = Path::new(rel);
@@ -105,7 +117,7 @@ fn walk(dir: &Path, base: &Path, root_key: &str, excludes: &[String], cfg: &Conf
             continue;
         }
         let Some(lang) = lang_of(&rel, cfg, config_dirs) else { continue };
-        if matches!(lang, "csharp" | "go" | "rust" | "typescript" | "lua" | "jvm" | "java" | "c" | "cpp" | "python" | "powershell") && !cfg.language_enabled(lang) {
+        if crate::config::is_code_lang(lang) && !cfg.language_enabled(lang) {
             continue;
         }
         if let Ok(meta) = entry.metadata() {
@@ -210,6 +222,14 @@ fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(data) => crate::source_ast::parse_with_annotations(&f.rel, &f.root, &f.lang, &data, &cfg.raw.c_annotations),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
+        "gdscript" | "kotlin" | "swift" | "objc" | "dart" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::tree_langs::parse(&f.rel, &f.root, &f.lang, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
+        "haxe" | "gml" | "hlsl" | "glsl" | "metal" | "wgsl" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::lexer_langs::parse(&f.rel, &f.root, &f.lang, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
         "prefab" => match std::fs::read_to_string(&f.abs) {
             Ok(text) => assets::parse_prefab(&f.rel, &f.root, &text),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
@@ -273,7 +293,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full5";
+const PARSER_VERSION: &str = "0.4.1-full6";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -725,6 +745,95 @@ mod tests {
 
     fn opts() -> Options {
         Options { force: false, jobs: 2, quiet: true, fast: true }
+    }
+
+    #[test]
+    fn indexes_game_development_language_frontends() {
+        let dir = std::env::temp_dir().join(format!("cg233-game-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"code","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#,
+        );
+        write(
+            &dir.join("game/PlayerGd.gd"),
+            "class_name PlayerGd\nextends Node2D\n\nvar health: int = 100\n\nfunc take_damage(amount: int) -> void:\n\thealth -= amount\n\nfunc _ready() -> void:\n\ttake_damage(10)\n",
+        );
+        write(
+            &dir.join("game/Enemy.kt"),
+            "package demo.game\n\nclass Enemy {\n    fun hit() {\n        takeDamage(5)\n    }\n\n    fun takeDamage(amount: Int) {\n        damage += amount\n    }\n}\n",
+        );
+        write(
+            &dir.join("game/Hero.swift"),
+            "class HeroSwift {\n    var hp: Int = 100\n    func takeDamage(_ amount: Int) {\n        hp -= amount\n    }\n    func update() {\n        takeDamage(3)\n    }\n}\n",
+        );
+        write(
+            &dir.join("game/Bag.m"),
+            "#import <Foundation/Foundation.h>\n@interface Bag : NSObject\n- (void)addItem:(NSString *)item withCount:(NSInteger)count;\n@end\n@implementation Bag\n- (void)addItem:(NSString *)item withCount:(NSInteger)count {\n    [self logItem:item count:count];\n}\n- (void)logItem:(NSString *)item count:(NSInteger)count {\n    NSLog(@\"%@\", item);\n}\n@end\n",
+        );
+        write(
+            &dir.join("game/player.dart"),
+            "class DartPlayer {\n  int hp = 100;\n  void takeDamage(int amount) {\n    hp -= amount;\n  }\n  void update() {\n    takeDamage(1);\n  }\n}\n",
+        );
+        write(
+            &dir.join("game/HaxePlayer.hx"),
+            "package demo;\n\nclass HaxePlayer {\n    public function new() {}\n    public function takeDamage(amount:Int):Void {\n        log(\"hit\");\n    }\n    function log(msg:String):Void {}\n}\n",
+        );
+        write(
+            &dir.join("scripts/PlayerGml.gml"),
+            "function PlayerGml(_name) constructor {\n    name = _name;\n    take_damage = function(amount) {\n        log_hit(\"hit\");\n    };\n    static log_hit = function(msg) {\n        show_debug_message(msg);\n    };\n}\n",
+        );
+        write(
+            &dir.join("shaders/Phong.hlsl"),
+            "float lighting(float3 n) {\n    return dot(n, n);\n}\n\nfloat4 main(float3 n) : SV_Target {\n    return float4(lighting(n), 1.0);\n}\n",
+        );
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0, "frontends must parse the fixtures cleanly");
+        let edges = edge_set(&cfg.db_path());
+        let expect = |src: &str, dst: &str, kind: &str| {
+            assert!(
+                edges.contains(&(src.to_string(), dst.to_string(), kind.to_string())),
+                "missing edge {src} -[{kind}]-> {dst}\n{edges:#?}"
+            );
+        };
+        expect("PlayerGd._ready", "PlayerGd.take_damage", "calls");
+        expect("demo.game.Enemy.hit", "demo.game.Enemy.takeDamage", "calls");
+        expect("HeroSwift.update", "HeroSwift.takeDamage", "calls");
+        expect("Bag.addItem:withCount:", "Bag.logItem:count:", "calls");
+        expect("DartPlayer.update", "DartPlayer.takeDamage", "calls");
+        expect("demo.HaxePlayer.takeDamage", "demo.HaxePlayer.log", "calls");
+        expect("PlayerGml.take_damage", "PlayerGml.log_hit", "calls");
+        expect("main", "lighting", "calls");
+    }
+
+    #[test]
+    fn game_extensions_map_to_their_frontends() {
+        let dir = temp_project("langmap");
+        let cfg = config::load(&dir).unwrap();
+        let dirs: Vec<PathBuf> = Vec::new();
+        let map = |rel: &str| lang_of(rel, &cfg, &dirs);
+        assert_eq!(map("Player.gd"), Some("gdscript"));
+        assert_eq!(map("Player.kt"), Some("kotlin"));
+        assert_eq!(map("Player.kts"), Some("kotlin"));
+        assert_eq!(map("Player.swift"), Some("swift"));
+        assert_eq!(map("Player.m"), Some("objc"));
+        assert_eq!(map("Player.mm"), Some("objc"));
+        assert_eq!(map("player.dart"), Some("dart"));
+        assert_eq!(map("Player.hx"), Some("haxe"));
+        assert_eq!(map("Player.gml"), Some("gml"));
+        assert_eq!(map("Player.luau"), Some("lua"));
+        assert_eq!(map("Shaders/Post.hlsl"), Some("hlsl"));
+        assert_eq!(map("Shaders/Post.usf"), Some("hlsl"));
+        assert_eq!(map("Shaders/Common.ush"), Some("hlsl"));
+        assert_eq!(map("Shaders/Legacy.cg"), Some("hlsl"));
+        assert_eq!(map("Shaders/Post.glsl"), Some("glsl"));
+        assert_eq!(map("Shaders/Post.gdshader"), Some("glsl"));
+        assert_eq!(map("Shaders/Post.metal"), Some("metal"));
+        assert_eq!(map("Shaders/Post.wgsl"), Some("wgsl"));
+        assert_eq!(map("Assets/Hero.shader"), None, "profile code has no shader assets");
     }
 
     #[test]
