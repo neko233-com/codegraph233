@@ -2,6 +2,21 @@
 
 ## 0.4.1-dev — unreleased
 
+- Index Unreal Engine 5 project assets: `.uproject`/`.uplugin` JSON modules,
+  plugin dependencies and class redirects; `.ini` sections/keys with `/Game/`
+  content paths and `/Script/` class references; `.uasset`/`.umap` header-level
+  package magic, engine versions and name-table samples. Mask Unreal reflection
+  macros (`UCLASS`, `UFUNCTION`, `UPROPERTY`, `GENERATED_BODY`, `*_API`, ...) for
+  C++ parsing while preserving original byte/line positions.
+- Index Godot 4 text scenes/projects: `.tscn`/`.tres` nodes, external/sub
+  resources and `ExtResource` instances; `project.godot` main scene and autoload
+  singletons.
+- Add a canonical language registry (`codegraph233 languages`), `is_code_lang`
+  dispatch and project-level `extra_extensions` mappings (bounded, validated,
+  first match wins over built-in extensions).
+- Extend auto-update controls: `update --enable`/`--disable`/`--interval HOURS`
+  persist to `~/.codegraph233/settings.json`; `--status` reports the current
+  auto-update state; interval is validated to 1–8760 hours.
 - Add bounded tree-sitter GDScript/Kotlin/Swift/Objective-C/Dart and lexical
   Haxe/GameMaker GML/HLSL/GLSL/Metal/WGSL source graphs. Index `.gd`, `.kt`/`.kts`,
   `.swift`, `.m`/`.mm`, `.dart`, `.hx`, `.gml`, `.hlsl`/`.cginc`/`.compute`/

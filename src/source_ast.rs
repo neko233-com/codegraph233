@@ -42,9 +42,94 @@ fn normalize_c_linkage_guards(source: &[u8], parsed: &mut [u8]) -> bool {
     true
 }
 
+/// Unreal reflection/generated-code macros are not C++ declarations. Mask the
+/// macro call (including balanced parentheses) so the declaration underneath
+/// parses, while byte offsets and line endings stay unchanged.
+fn mask_unreal_macros(source: &[u8], parsed: &mut [u8]) -> bool {
+    const MACROS: &[&[u8]] = &[
+        b"UCLASS",
+        b"USTRUCT",
+        b"UENUM",
+        b"UINTERFACE",
+        b"UFUNCTION",
+        b"UPROPERTY",
+        b"UPARAM",
+        b"UMETA",
+        b"GENERATED_BODY",
+        b"GENERATED_UCLASS_BODY",
+        b"GENERATED_USTRUCT_BODY",
+        b"GENERATED_BODY_LEGACY",
+        b"UE_DEPRECATED",
+    ];
+    let toks = crate::lexer::tokenize(
+        source,
+        crate::lexer::Options {
+            hash_directives: true,
+            ..Default::default()
+        },
+    );
+    let mut changed = false;
+    let is_api_macro = |name: &[u8]| -> bool {
+        name.len() > 4
+            && name.ends_with(b"_API")
+            && name[..name.len() - 4]
+                .iter()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
+    };
+    let mut i = 0;
+    while i < toks.len() {
+        let name = &source[toks[i].start..toks[i].end];
+        if !MACROS.contains(&name) {
+            if is_api_macro(name) {
+                for b in &mut parsed[toks[i].start..toks[i].end] {
+                    if *b != b'\r' && *b != b'\n' {
+                        *b = b' ';
+                    }
+                }
+                changed = true;
+            }
+            i += 1;
+            continue;
+        }
+        let start = toks[i].start;
+        let mut end = toks[i].end;
+        let mut next = i + 1;
+        if next < toks.len() && &source[toks[next].start..toks[next].end] == b"(" {
+            let mut depth = 0i32;
+            while next < toks.len() {
+                let piece = &source[toks[next].start..toks[next].end];
+                if piece == b"(" {
+                    depth += 1;
+                } else if piece == b")" {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = toks[next].end;
+                        next += 1;
+                        break;
+                    }
+                }
+                next += 1;
+            }
+            if depth != 0 {
+                end = toks[i].end;
+                next = i + 1;
+            }
+        }
+        for byte in &mut parsed[start..end] {
+            if !matches!(*byte, b'\r' | b'\n') {
+                *byte = b' ';
+            }
+        }
+        changed = true;
+        i = next;
+    }
+    changed
+}
+
 fn text<'a>(node: Node<'_>, source: &'a [u8]) -> &'a str {
     node.utf8_text(source).unwrap_or("")
 }
+
 fn child<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
     let mut c = node.walk();
     let found = node.named_children(&mut c).find(|n| n.kind() == kind);
@@ -673,6 +758,9 @@ pub fn parse_with_annotations(
     if lang == "cpp" && normalize_c_linkage_guards(source, &mut normalized) {
         annotations.insert("__cplusplus C-linkage guards".into());
     }
+    if lang == "cpp" && mask_unreal_macros(source, &mut normalized) {
+        annotations.insert("Unreal reflection macros".into());
+    }
     if matches!(lang, "c" | "cpp") {
         for token in crate::lexer::tokenize(
             source,
@@ -946,6 +1034,33 @@ mod tests {
         );
         let comment = [b"/*\n".as_slice(), source, b"*/\n".as_slice()].concat();
         assert!(!normalize_c_linkage_guards(&comment, &mut comment.clone()));
+    }
+    #[test]
+    fn unreal_reflection_macros_keep_declarations_and_lines() {
+        let source = b"UCLASS()\nclass MYGAME_API AMyActor : public AActor {\n    GENERATED_BODY()\npublic:\n    UFUNCTION(BlueprintCallable, Category=\"Game\")\n    void BeginPlay();\n    UPROPERTY(EditAnywhere)\n    int32 Health = 100;\n};\n";
+        let parsed = parse("AMyActor.h", "game", "cpp", source);
+        assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        assert!(
+            parsed.symbols.iter().all(|s| s.name != "MYGAME_API"),
+            "export macro must not leak into the class name"
+        );
+        let class = parsed
+            .symbols
+            .iter()
+            .find(|s| s.qualname == "AMyActor")
+            .expect("class survives the macro prefix");
+        assert_eq!(class.start_line, 2);
+        let begin = parsed
+            .symbols
+            .iter()
+            .find(|s| s.name == "BeginPlay")
+            .expect("UFUNCTION member");
+        assert_eq!(begin.start_line, 6);
+        assert!(parsed.symbols.iter().any(|s| s.name == "Health"), "UPROPERTY field");
+        assert!(parsed
+            .symbols
+            .iter()
+            .any(|s| s.modifiers.contains("Unreal reflection macros")));
     }
     #[cfg(windows)]
     #[test]

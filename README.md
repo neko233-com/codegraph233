@@ -2,7 +2,7 @@
 
 **AST GraphRAG for game projects — Rust 实现。**
 
-索引 C# / Go / Rust / TypeScript / JavaScript / Lua / Java / C / C++ / Python / PowerShell / GDScript / Kotlin / Swift / Objective-C / Dart / Haxe / GameMaker GML / HLSL / GLSL / Metal / WGSL 源码、普通 CLASS/JAR、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
+索引 C# / Go / Rust / TypeScript / JavaScript / Lua / Java / C / C++ / Python / PowerShell / GDScript / Kotlin / Swift / Objective-C / Dart / Haxe / GameMaker GML / HLSL / GLSL / Metal / WGSL 源码、普通 CLASS/JAR、Unity 与 Unreal Engine 5 / Godot 工程资产、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
 
 ## 能力（Rust 实现）
 
@@ -20,6 +20,9 @@
 | Haxe / GameMaker GML 源码前端 | ✅ 0.4.1-dev；词法级类型 / 字段 / 方法 / 构造器 / 调用；GML 支持 constructor 与静态方法 |
 | HLSL / GLSL / Metal / WGSL 源码前端 | ✅ 0.4.1-dev；函数 / struct / 调用；含 `.usf` / `.ush` / `.cg` / `.gdshader`；`.shader` 仍走资产解析器（properties / include / 关键字） |
 | 普通 CLASS / JAR 原生读取、资源哈希与 JVM 描述符关系 | ✅ 0.4.1-dev；不需要 Java 运行时，不执行输入；[格式与边界](docs/jvm-facts.md)，不是反编译器 |
+| Unreal Engine 5 工程资产（`.uproject` / `.uplugin` JSON 模块与插件、`.ini` 的 `/Game/` 与 `/Script/` 引用、`.uasset` / `.umap` 头级包信息） | ✅ 0.4.1-dev；uasset 只读文件头 / 版本 / 名称表样本，不解压属性、不解析蓝图逻辑；[边界](docs/source-frontends.md) |
+| Godot 4 场景与工程（`.tscn` / `.tres` 节点、外部资源、`ExtResource` 实例、`project.godot` 主场景与 autoload） | ✅ 0.4.1-dev；文本格式静态解析，不启动 Godot |
+| 语言注册表与扩展点（`codegraph233 languages`、`extra_extensions` 自定义扩展名映射） | ✅ 0.4.1-dev；22 个代码前端 + 11 个资产 / 引擎前端统一登记 |
 | prefab / scene（GameObject 层级、m_Script、嵌套 prefab、guid 引用） | ✅ |
 | shader（Shader / property / include / multi_compile 关键字 / HLSL 函数） | ✅ |
 | 媒体资产（图片宽高、音频采样率/码率/时长、视频时长、字体名与字形数、Spine atlas/skel） | ✅ |
@@ -28,7 +31,7 @@
 | guid 映射（编辑器导出 TSV/CSV/JSON + 明文 `.meta` 补充 + 资产边物化） | ✅ |
 | 增量索引（mtime/size）、prune、并行绑定 | ✅ |
 | 增量重绑定（小 delta 只重算相关边，结果与全量重建一致） | ✅ |
-| CLI：`init` / `index` / `status` / `compact` / `register` / `projects` / `install-mcp` | ✅ |
+| CLI：`init` / `index` / `status` / `compact` / `register` / `projects` / `languages` / `install-mcp` | ✅ |
 | MCP stdio + 23 个工具 | ✅ |
 | 多项目（注册表 `~/.codegraph233/projects.json`、工具 `project` 参数、`cg233_projects`） | ✅ |
 
@@ -59,6 +62,7 @@ cd <game-project>
 codegraph233 init        # 生成 .codegraph233.json（自动识别团结/Unity）
 codegraph233 index       # 全量索引，之后自动增量
 codegraph233 status      # 统计
+codegraph233 languages   # 已登记的语言 / 引擎前端与扩展名（--json 可机读）
 codegraph233 serve       # MCP stdio（客户端会自动拉起）
 ```
 
@@ -85,10 +89,14 @@ codegraph233 update --force     # 即使版本相同也重装
 codegraph233 update --status    # 查看自动更新设置和 mirror
 codegraph233 update --check --json
 codegraph233 update --mirror https://ghfast.top/   # 换镜像并持久化
+codegraph233 update --enable --interval 12         # 开启自动更新，12 小时一次
+codegraph233 update --disable                      # 关闭自动更新
 ```
 
 * 自动更新默认开启：`index` / `serve` 启动时在后台检查，24 小时最多一次；发现新版本会下载、
   替换二进制并提示重启 MCP 客户端。`--no-update` 可跳过本次检查。
+* `--enable` / `--disable` / `--interval HOURS` / `--mirror URL` 会持久化到设置文件
+  （interval 取值 1–8760 小时），`--status` 立即回显当前设置。
 * 设置文件：`~/.codegraph233/settings.json`（`auto_update`、`interval_hours`、`mirror`、`mirrors`、
   `last_check`、`last_version`）。可直接编辑。
 * 环境变量：`CODEGRAPH233_MIRROR`（覆盖镜像）、`CODEGRAPH233_AUTO_UPDATE=0`（关闭自动更新）、
@@ -116,7 +124,11 @@ codegraph233 update --mirror https://ghfast.top/   # 换镜像并持久化
 ```
 
 * `profile`：`full` / `game` / `code` / `minimal`；`features` 可按项覆盖。
-* `languages` 省略默认 `["csharp"]`；`["auto"]` 表示全部已实现前端（`CODE_LANGUAGES`：csharp / go / rust / typescript / lua / jvm / java / c / cpp / python / powershell / gdscript / kotlin / swift / objc / dart / haxe / gml / hlsl / glsl / metal / wgsl）。
+* `languages` 省略默认 `["csharp"]`；`["auto"]` 表示全部已实现前端（`CODE_LANGUAGES`：csharp / go / rust / typescript / lua / jvm / java / c / cpp / python / powershell / gdscript / kotlin / swift / objc / dart / haxe / gml / hlsl / glsl / metal / wgsl）。`codegraph233 languages` 列出全部登记项及其扩展名。
+* `extra_extensions`：把任意扩展名映射到已登记的前端，例如
+  `{"extra_extensions": {"gd2": "gdscript", "mm2": "objc", "scene": "godot_scene"}}`。
+  键会自动小写并去掉前导 `.`，目标必须是 `codegraph233 languages` 中存在的 id；
+  自定义映射优先于内置扩展名，最多 64 条。
 * 索引产物：`.codegraph233/index.db`（gitignore，可重建）。schema 版本变化时 `index` 会自动重建，`status` 会提示 `stale schema`。
 * `codegraph233 compact`：`ANALYZE` + `VACUUM`，回收增量索引产生的空闲页。
 

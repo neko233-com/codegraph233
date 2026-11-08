@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const CONFIG_NAME: &str = ".codegraph233.json";
@@ -49,6 +50,11 @@ pub struct RawConfig {
     /// Names only: no replacement text or preprocessor execution.
     #[serde(default)]
     pub c_annotations: Vec<String>,
+    /// Extension -> registered language id. Lets a project index extra
+    /// suffixes (e.g. `"mm2": "objc"`) without a new parser. Insertion order is
+    /// stable because this participates in the config identity hash.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra_extensions: BTreeMap<String, String>,
 }
 
 pub fn jvm_release() -> u32 { 8 }
@@ -78,6 +84,8 @@ pub struct Config {
     pub file: PathBuf,
     pub raw: RawConfig,
     pub features: Features,
+    /// Validated, canonical extension overrides.
+    pub extra_extensions: BTreeMap<String, String>,
 }
 
 /// Code languages with a dedicated source frontend. `jvm` covers CLASS/JAR
@@ -142,13 +150,46 @@ pub fn load(start: &Path) -> Result<Config, String> {
             role: "frontend".into(),
         });
     }
+    let extra_extensions = normalize_extra_extensions(&raw.extra_extensions)?;
     let features = resolve_features(&raw);
     Ok(Config {
         dir,
         file,
         raw,
         features,
+        extra_extensions,
     })
+}
+
+/// Validate project extension overrides. Keys are bare suffixes (a leading dot
+/// is ignored) and values must name a registered frontend.
+fn normalize_extra_extensions(
+    input: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, String> {
+    if input.len() > 64 {
+        return Err("extra_extensions supports at most 64 entries".into());
+    }
+    let mut out = BTreeMap::new();
+    for (ext, target) in input {
+        let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+        if ext.is_empty()
+            || ext.len() > 16
+            || !ext
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'+' | b'-'))
+        {
+            return Err(format!(
+                "extra_extensions key {ext:?} must be 1-16 ASCII letters, digits, '_', '+' or '-'"
+            ));
+        }
+        let Some(id) = crate::langs::canonical(target) else {
+            return Err(format!(
+                "extra_extensions target {target:?} is not a registered language (run `codegraph233 languages`)"
+            ));
+        };
+        out.insert(ext, id.to_string());
+    }
+    Ok(out)
 }
 
 pub fn resolve_features(raw: &RawConfig) -> Features {
@@ -339,5 +380,28 @@ mod tests {
         assert_eq!(cfg.languages(), vec!["csharp".to_string()]);
         assert!(!cfg.language_enabled("jvm"));
         assert!(!cfg.language_enabled("rust"));
+    }
+
+    #[test]
+    fn extra_extensions_are_normalized_and_validated() {
+        let dir = temp_dir("extra-ext");
+        std::fs::write(
+            dir.join(CONFIG_NAME),
+            r#"{"version":1,"profile":"code","extra_extensions":{".GD2":"gdscript","mm2":"objc","scene":"godot_scene"}}"#,
+        )
+        .unwrap();
+        let cfg = load(&dir).unwrap();
+        assert_eq!(cfg.extra_extensions.get("gd2").map(|s| s.as_str()), Some("gdscript"));
+        assert_eq!(cfg.extra_extensions.get("mm2").map(|s| s.as_str()), Some("objc"));
+        assert_eq!(cfg.extra_extensions.get("scene").map(|s| s.as_str()), Some("godot_scene"));
+
+        let dir = temp_dir("extra-ext-bad");
+        std::fs::write(
+            dir.join(CONFIG_NAME),
+            r#"{"version":1,"profile":"code","extra_extensions":{"xx":"not-a-language"}}"#,
+        )
+        .unwrap();
+        let err = load(&dir).unwrap_err();
+        assert!(err.contains("not a registered language"), "{err}");
     }
 }

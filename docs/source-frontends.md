@@ -27,6 +27,11 @@ profile/features.
 | `.metal` | Lexical Metal structs/functions and calls |
 | `.wgsl` | Lexical WGSL structs, `fn` entry points and calls |
 | `.class`, `.jar`, `.cg-jvm.jsonl` | [Native bytecode reader and fact importer](jvm-facts.md) |
+| `.uproject`, `.uplugin` | JSON project/plugin descriptors: engine association, modules and plugin dependencies as asset edges |
+| `.ini` | Unreal config sections/keys, with `/Game/...` content paths and `/Script/...` class references |
+| `.uasset`, `.umap` | Unreal package header only: magic, legacy/UE4/UE5 versions, package name table sample; no property serialization, decompression or blueprint logic |
+| `.tscn`, `.tres` | Godot 4 text scenes/resources: nodes, external resources, sub-resources, `ExtResource` instances |
+| `project.godot` | Godot project config: name, `run/main_scene`, `[autoload]` singletons |
 
 These are static navigation aids, not complete compilers, type checkers, macro
 preprocessors, runtime traces or source recovery tools. Known JNI/Windows
@@ -79,6 +84,25 @@ output bounded and a 10-second deadline kills the owned parser. Set
 retain the portable diagnostics and fallback failure. Other languages do not
 require this runtime; cross-platform fallback execution is not tested here.
 
+Engine project assets are read statically and never handed to an editor or
+runtime. Unreal `.uasset`/`.umap` inputs are header-level views: they report the
+package magic, saved engine versions and a bounded name-table sample when the
+header is decodable, and otherwise keep a visible error; object properties,
+exports, compressed chunks and blueprint bytecode are not parsed. Unreal
+reflection macros (`UCLASS`, `UFUNCTION`, `UPROPERTY`, `GENERATED_BODY`, `*_API`
+export macros and related tokens, including balanced parentheses) are masked for
+C++ parsing with original byte/line positions preserved. Godot `.tscn`/`.tres`
+parsing covers text resources only, and `.godot` project files are read as
+`project.godot`; binary `.res`/`.scn` inputs are not decoded. Existing `.shader`
+assets keep the ShaderLab property/include/keyword parser rather than the HLSL
+source frontend.
+
+`codegraph233 languages` prints the canonical registry (id, backend, extensions,
+strict/dynamic/asset mode). Projects can add custom extension mappings with
+`extra_extensions`, e.g. `{"extra_extensions": {"gd2": "gdscript"}}`; keys are
+lowercased, a leading dot is stripped and targets must be registered ids.
+Custom mappings win over built-in extensions and are bounded to 64 entries.
+
 Specify project roots on every MCP call. Roots are directories; excludes match
 directory basenames or root-relative prefixes, **not globs**. Keep caches and
 third-party inputs ignored. Parser/config changes invalidate old indexes; do
@@ -99,14 +123,22 @@ extraction tests plus one Kotlin recovery test, four lexer-frontend tests, one
 cross-language indexer integration test, two auto-language configuration tests
 and one extension-mapping test covering GDScript, Kotlin, Swift, Objective-C,
 Dart, Haxe, GML, HLSL, GLSL, Metal, WGSL and the `.usf`/`.ush`/`.cg`/`.gdshader`
-project extensions. The full suite is 47 tests passing on Windows x64/Rust 1.99.
-A synthetic 10-file project with `languages: ["auto"]` was indexed end-to-end
-(zero parse diagnostics, all 22 frontends enabled), and the existing
-`testdata/multi` fixture re-indexed without regressions in its C#, Go, Rust,
-TypeScript, Lua or Unity-asset counts. A real third-party project mixing these
-new languages was not used for this validation. Raw third-party artifacts are
-not shipped. These checks do not establish editor business-source recovery,
-application acceptance or support for every language.
+project extensions. The Unreal/Godot work adds 16 more: four language-registry
+tests, seven engine-asset tests (project/plugin JSON, INI paths, synthetic and
+malformed uasset headers, Godot scene/project), one extension-override config
+test, two indexer integration/mapping tests, one Unreal macro-masking source
+test and one auto-update settings test. The full suite is 63 tests passing on
+Windows x64/Rust 1.99. A synthetic 10-file project with `languages: ["auto"]`
+was indexed end-to-end (zero parse diagnostics, all 22 frontends enabled), and
+the existing `testdata/multi` fixture re-indexed without regressions in its C#,
+Go, Rust, TypeScript, Lua or Unity-asset counts. A separate synthetic UE5/Godot
+project (`.uproject`, `.uplugin`, `DefaultEngine.ini`, a header-level `.uasset`,
+`.tscn`, `project.godot`, GDScript and C++ reflection macros) indexed with zero
+parse diagnostics and the expected module/plugin/`/Game/`/main-scene/autoload
+asset edges. A real third-party project mixing these new languages was not used
+for this validation. Raw third-party artifacts are not shipped. These checks do
+not establish editor business-source recovery, application acceptance or support
+for every language.
 
 Follow-up validation: explicit project annotations, configuration invalidation,
 original declaration prefixes, and real split C-linkage header members passed

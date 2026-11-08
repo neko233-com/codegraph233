@@ -46,6 +46,11 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     let f = &cfg.features;
+    if let Some(target) = cfg.extra_extensions.get(&ext) {
+        if let Some(spec) = crate::langs::spec(target) {
+            return Some(spec.id);
+        }
+    }
     match ext.as_str() {
         "cs" if f.code => Some("csharp"),
         "go" if f.code => Some("go"),
@@ -74,6 +79,12 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         "glsl" | "vert" | "frag" | "geom" | "comp" | "tesc" | "tese" | "gdshader" if f.code || f.shaders => Some("glsl"),
         "metal" if f.code || f.shaders => Some("metal"),
         "wgsl" if f.code || f.shaders => Some("wgsl"),
+        "uproject" if f.assets || f.code => Some("ue_project"),
+        "uplugin" if f.assets || f.code => Some("ue_plugin"),
+        "ini" if f.assets || f.config_tables => Some("ue_config"),
+        "uasset" | "umap" if f.assets => Some("ue_asset"),
+        "tscn" | "tres" if f.assets => Some("godot_scene"),
+        "godot" if f.assets || f.config_tables => Some("godot_project"),
         "xlsx" | "csv" | "tsv" if f.config_tables => Some("config"),
         "json" if f.config_tables => {
             let abs = Path::new(rel);
@@ -230,6 +241,16 @@ fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(data) => crate::lexer_langs::parse(&f.rel, &f.root, &f.lang, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
+        "ue_project" | "ue_plugin" | "ue_config" | "godot_scene" | "godot_project" => {
+            match std::fs::read_to_string(&f.abs) {
+                Ok(text) => crate::engine_assets::parse_text(&f.rel, &f.root, &f.lang, &text),
+                Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+            }
+        }
+        "ue_asset" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::engine_assets::parse_uasset(&f.rel, &f.root, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
         "prefab" => match std::fs::read_to_string(&f.abs) {
             Ok(text) => assets::parse_prefab(&f.rel, &f.root, &text),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
@@ -293,7 +314,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full6";
+const PARSER_VERSION: &str = "0.4.1-full7";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -698,6 +719,13 @@ mod tests {
         fs::write(path, text).unwrap();
     }
 
+    fn write_bytes(path: &Path, bytes: &[u8]) {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(path, bytes).unwrap();
+    }
+
     /// Edges keyed by qualified names so a rebuild (which renumbers ids) can be
     /// compared with an incremental pass.
     fn edge_set(db: &Path) -> Vec<(String, String, String)> {
@@ -963,6 +991,127 @@ mod tests {
         assert!(config::load(&dir).unwrap_err().contains("c_annotations"));
         let _=fs::remove_dir_all(dir);
     }
+    #[test]
+    fn indexes_unreal_and_godot_project_assets() {
+        let dir = std::env::temp_dir().join(format!("cg233-engine-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#,
+        );
+        write(
+            &dir.join("MyGame.uproject"),
+            r#"{"FileVersion":3,"EngineAssociation":"5.4","Modules":[{"Name":"MyGame"}],"Plugins":[{"Name":"EnhancedInput"}]}"#,
+        );
+        write(
+            &dir.join("Config/DefaultEngine.ini"),
+            "[/Script/EngineSettings.GameMapsSettings]\nGameDefaultMap=/Game/Maps/Main.Main\n",
+        );
+        let mut uasset = 0xC1832A9Eu32.to_le_bytes().to_vec();
+        uasset.extend_from_slice(&[0u8; 12]);
+        write_bytes(&dir.join("Content/Hero.uasset"), &uasset);
+        write(
+            &dir.join("scenes/Main.tscn"),
+            "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://src/player.gd\" id=\"1_abc\"]\n\n[node name=\"Player\" type=\"CharacterBody2D\"]\nscript = ExtResource(\"1_abc\")\n",
+        );
+        write(
+            &dir.join("project.godot"),
+            "[application]\n\nconfig/name=\"Game\"\nrun/main_scene=\"res://scenes/Main.tscn\"\n\n[autoload]\n\nPlayer=\"*res://src/player.gd\"\n",
+        );
+        write(
+            &dir.join("src/player.gd"),
+            "class_name Player\nextends Node\n\nfunc _ready() -> void:\n\tpass\n",
+        );
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+        let store = Store::open(&cfg.db_path(), false).unwrap();
+        let rows: Vec<(String, String, String)> = store
+            .conn
+            .prepare("SELECT src, dst, kind FROM asset_edges")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        let has = |src: &str, dst: &str, kind: &str| {
+            rows.iter().any(|r| r.0 == src && r.1 == dst && r.2 == kind)
+        };
+        assert!(
+            has("asset:app:MyGame.uproject", "ue_module:MyGame", "contains_module"),
+            "{rows:?}"
+        );
+        assert!(has(
+            "asset:app:MyGame.uproject",
+            "ue_plugin:EnhancedInput",
+            "uses_plugin"
+        ));
+        assert!(has(
+            "asset:app:Config/DefaultEngine.ini",
+            "uegame:Maps/Main.Main",
+            "ue_reference"
+        ));
+        assert!(has(
+            "asset:app:scenes/Main.tscn",
+            "asset:app:src/player.gd",
+            "references"
+        ));
+        assert!(has(
+            "asset:app:project.godot",
+            "asset:app:scenes/Main.tscn",
+            "main_scene"
+        ));
+        assert!(has(
+            "asset:app:project.godot",
+            "asset:app:src/player.gd",
+            "autoload"
+        ));
+        let kinds: Vec<String> = store
+            .conn
+            .prepare("SELECT kind FROM assets")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .flatten()
+            .collect();
+        for kind in ["ue_project", "ue_config", "ue_asset", "godot_scene", "godot_project"] {
+            assert!(kinds.iter().any(|k| k == kind), "missing {kind}: {kinds:?}");
+        }
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extra_extensions_route_discovery_and_languages() {
+        let dir = temp_project("extra-ext");
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"code","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["gdscript"],"extra_extensions":{"gd2":"gdscript"}}"#,
+        );
+        write(
+            &dir.join("Hero.gd2"),
+            "class_name Hero\nextends Node\n\nfunc ping() -> void:\n\tpass\n",
+        );
+        let cfg = config::load(&dir).unwrap();
+        assert_eq!(lang_of("Hero.gd2", &cfg, &[]), Some("gdscript"));
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+        assert!(stats.files >= 1);
+        let store = Store::open(&cfg.db_path(), false).unwrap();
+        let n: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM symbols WHERE qualname='Hero.ping'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]
@@ -1024,4 +1173,5 @@ mod asset_edge_tests {
         drop(store);
         let _ = fs::remove_dir_all(&dir);
     }
+
 }

@@ -2,10 +2,12 @@ mod assets;
 mod binder;
 mod config;
 mod csharp;
+mod engine_assets;
 mod go_lang;
 mod indexer;
 mod jvm_facts;
 mod jvm_binary;
+mod langs;
 mod source_ast;
 mod quiet;
 mod powershell_ast;
@@ -42,11 +44,13 @@ fn usage() {
          \n\
          codegraph233 index  [--root PATH] [--force] [--jobs N] [--profile P] [--safe] [--quiet]\n\
          codegraph233 status [--root PATH]\n\
+         codegraph233 languages [--json]\n\
          codegraph233 compact [--root PATH]\n\
          codegraph233 register|unregister [--root PATH]\n\
          codegraph233 projects\n\
          codegraph233 install-mcp [--scope global|project|both]\n\
          codegraph233 update [--check] [--force] [--mirror URL] [--json]\n\
+         codegraph233 update --enable|--disable [--interval HOURS] [--mirror URL]\n\
          codegraph233 update --status\n\
          codegraph233 version\n"
     );
@@ -258,6 +262,40 @@ fn main() {
             let _ = projects::save(&reg);
             println!("{} {}", if removed { "unregistered" } else { "not registered" }, target.display());
         }
+        "languages" => {
+            if has_flag(&rest, "--json") {
+                let rows: Vec<_> = langs::SPECS
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "id": s.id,
+                            "backend": s.backend.as_str(),
+                            "extensions": s.extensions,
+                            "strict": s.strict,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
+            } else {
+                println!("{:<14} {:<12} {:<46} mode", "id", "backend", "extensions");
+                for s in langs::SPECS {
+                    let mode = if s.strict {
+                        "strict"
+                    } else if matches!(s.backend, langs::Backend::Asset) {
+                        "asset"
+                    } else {
+                        "dynamic"
+                    };
+                    println!(
+                        "{:<14} {:<12} {:<46} {}",
+                        s.id,
+                        s.backend.as_str(),
+                        langs::extensions(s.id).join(","),
+                        mode
+                    );
+                }
+            }
+        }
         "projects" => {
             let reg = projects::load();
             if reg.projects.is_empty() {
@@ -324,7 +362,33 @@ fn main() {
             }
         }
         "update" => {
-            if has_flag(&rest, "--status") {
+            let interval_flag = arg_value(&rest, "--interval");
+            let interval = match interval_flag {
+                Some(v) => match v.parse::<u64>() {
+                    Ok(n) => Some(n),
+                    Err(_) => {
+                        eprintln!("error: --interval expects a number of hours");
+                        std::process::exit(1);
+                    }
+                },
+                None => None,
+            };
+            let enable = if has_flag(&rest, "--enable") {
+                Some(true)
+            } else if has_flag(&rest, "--disable") {
+                Some(false)
+            } else {
+                None
+            };
+            if enable.is_some() || interval.is_some() {
+                match update::apply_options(enable, interval, arg_value(&rest, "--mirror")) {
+                    Ok(s) => println!("{}", update::settings_summary(&s)),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            } else if has_flag(&rest, "--status") {
                 if let Err(e) = update::print_status() {
                     eprintln!("error: {e}");
                     std::process::exit(1);

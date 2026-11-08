@@ -94,6 +94,49 @@ pub fn save_settings(s: &Settings) -> Result<(), String> {
     fs::write(&path, format!("{text}\n")).map_err(|e| e.to_string())
 }
 
+/// Apply CLI update preferences in memory; validation lives here so both the
+/// command and tests exercise the same rules.
+fn apply(s: &mut Settings, enable: Option<bool>, interval: Option<u64>, mirror: Option<String>) -> Result<(), String> {
+    if let Some(hours) = interval {
+        if hours == 0 || hours > 24 * 365 {
+            return Err("interval must be between 1 and 8760 hours".into());
+        }
+        s.interval_hours = hours;
+    }
+    if let Some(on) = enable {
+        s.auto_update = on;
+    }
+    if let Some(prefix) = mirror {
+        s.mirror = prefix;
+    }
+    Ok(())
+}
+
+/// `codegraph233 update --enable|--disable [--interval HOURS] [--mirror URL]`
+/// persists the choice used by the background auto-updater.
+pub fn apply_options(
+    enable: Option<bool>,
+    interval: Option<u64>,
+    mirror: Option<String>,
+) -> Result<Settings, String> {
+    let mut s = load_settings();
+    apply(&mut s, enable, interval, mirror)?;
+    save_settings(&s)?;
+    Ok(s)
+}
+
+pub fn settings_summary(s: &Settings) -> String {
+    let mirror = if s.mirror.is_empty() {
+        "auto".to_string()
+    } else {
+        s.mirror.clone()
+    };
+    format!(
+        "auto_update={} interval_hours={} mirror={mirror}",
+        s.auto_update, s.interval_hours
+    )
+}
+
 pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
@@ -466,13 +509,10 @@ pub fn run(check: bool, force: bool, mirror: Option<String>, json: bool) -> Resu
         }
         return Ok(());
     }
-    match check_and_update(&s, force, false)? {
-        Some(v) => {
-            s.last_version = v;
-            s.last_check = crate::store::now_unix();
-            let _ = save_settings(&s);
-        }
-        None => {}
+    if let Some(v) = check_and_update(&s, force, false)? {
+        s.last_version = v;
+        s.last_check = crate::store::now_unix();
+        let _ = save_settings(&s);
     }
     Ok(())
 }
@@ -542,5 +582,21 @@ mod tests {
         let out = extract_binary(&archive, &dir).unwrap();
         assert_eq!(std::fs::read(&out).unwrap(), b"fake-binary");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn update_options_validate_and_apply() {
+        let mut s = Settings::default();
+        apply(&mut s, Some(false), Some(6), Some("https://example/".into())).unwrap();
+        assert!(!s.auto_update);
+        assert_eq!(s.interval_hours, 6);
+        assert_eq!(s.mirror, "https://example/");
+        assert_eq!(
+            settings_summary(&s),
+            "auto_update=false interval_hours=6 mirror=https://example/"
+        );
+        assert!(apply(&mut Settings::default(), None, Some(0), None).is_err());
+        assert!(apply(&mut Settings::default(), None, Some(24 * 366), None).is_err());
+        assert!(apply(&mut Settings::default(), Some(true), None, None).is_ok());
     }
 }
