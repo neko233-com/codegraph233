@@ -32,6 +32,13 @@ profile/features.
 | `.uasset`, `.umap` | Unreal package header only: magic, legacy/UE4/UE5 versions, package name table sample; no property serialization, decompression or blueprint logic |
 | `.tscn`, `.tres` | Godot 4 text scenes/resources: nodes, external resources, sub-resources, `ExtResource` instances |
 | `project.godot` | Godot project config: name, `run/main_scene`, `[autoload]` singletons |
+| `.mixer` | Unity AudioMixer YAML: controller, groups, snapshots and effects, with `m_ParentGroup` routing edges |
+| `.wwu`, `.wproj`, `.bnk`, `.wem` | Wwise workunits/projects/banks/media: events, switch/state groups, banks and bus objects; `.wem` RIFF/WAVE header only |
+| `.fspro`, `.strings`, `.bank` | FMOD project/string tables/FSB5 banks: events, buses, VCAs, NUL-separated path lists, FSB5 header |
+| `.gltf`, `.glb` | glTF scenes: nodes, meshes, materials, textures, images, animations and skins, with material/texture/URI edges |
+| `.ase`, `.aseprite` | Aseprite layers and tags read from binary frame/chunk headers |
+| `.fbx` | FBX header only: `Kaydara FBX Binary` magic + version, or ASCII `; FBX` banner |
+| `Packages/manifest.json`, `packages-lock.json` | Unity UPM package dependency graph |
 
 These are static navigation aids, not complete compilers, type checkers, macro
 preprocessors, runtime traces or source recovery tools. Known JNI/Windows
@@ -97,6 +104,26 @@ parsing covers text resources only, and `.godot` project files are read as
 assets keep the ShaderLab property/include/keyword parser rather than the HLSL
 source frontend.
 
+Art and audio pipeline inputs are read statically. Unity `.mixer` files are
+YAML documents whose group/snapshot/effect objects become assets and whose
+`m_ParentGroup` links become `routes_to` edges (child to parent). Wwise `.wwu`
+workunits expose events, switch/state groups, RTPCs, banks and bus objects as
+named assets; `.wproj` contributes project metadata; `.bnk` is a header-level
+BKHD view and `.wem` a RIFF/WAVE header view. FMOD `.fspro` project JSON is walked
+for events, buses, VCAs and banks; `.strings` is a bounded NUL-separated path
+list; `.bank` is an FSB5 header view. None of these decode audio payloads or
+execute middleware. glTF `.gltf`/`.glb` inputs expose nodes, meshes, materials,
+textures, images, animations and skins with containment and `uses_material` /
+`uses_texture` / `uses_image` / `uses_mesh` / `uses_skin` edges; GLB content is
+read from the JSON chunk only (no binary buffer decoding). External image and
+buffer URIs are resolved relative to the source file and emitted as `references`
+edges. Aseprite `.ase`/`.aseprite` reports layers and tags from chunk headers;
+FBX reports only the header magic and version; Unity UPM `Packages/manifest.json`
+and `packages-lock.json` become `upm_manifest`/`upm_lock` assets with
+`upm_package` children. All pipeline inputs keep the same 16 MiB, two-second and
+diagnostic bounds as other asset frontends, and `.shader` files still use the
+ShaderLab asset parser.
+
 `codegraph233 languages` prints the canonical registry (id, backend, extensions,
 strict/dynamic/asset mode). Projects can add custom extension mappings with
 `extra_extensions`, e.g. `{"extra_extensions": {"gd2": "gdscript"}}`; keys are
@@ -127,15 +154,22 @@ project extensions. The Unreal/Godot work adds 16 more: four language-registry
 tests, seven engine-asset tests (project/plugin JSON, INI paths, synthetic and
 malformed uasset headers, Godot scene/project), one extension-override config
 test, two indexer integration/mapping tests, one Unreal macro-masking source
-test and one auto-update settings test. The full suite is 63 tests passing on
-Windows x64/Rust 1.99. A synthetic 10-file project with `languages: ["auto"]`
+test and one auto-update settings test. The art/audio pipeline work adds 8 more:
+seven parser tests (Unity mixer, Wwise workunit/bank, FMOD project/strings/FSB5,
+glTF, GLB, Aseprite, FBX/UPM) and one indexer integration test covering mixer
+routing, Wwise/FMOD banks, glTF material edges and UPM packages. The full suite
+is 71 tests passing on Windows x64/Rust 1.99. A synthetic 10-file project with
+`languages: ["auto"]`
 was indexed end-to-end (zero parse diagnostics, all 22 frontends enabled), and
 the existing `testdata/multi` fixture re-indexed without regressions in its C#,
 Go, Rust, TypeScript, Lua or Unity-asset counts. A separate synthetic UE5/Godot
 project (`.uproject`, `.uplugin`, `DefaultEngine.ini`, a header-level `.uasset`,
 `.tscn`, `project.godot`, GDScript and C++ reflection macros) indexed with zero
 parse diagnostics and the expected module/plugin/`/Game/`/main-scene/autoload
-asset edges. A real third-party project mixing these new languages was not used
+asset edges. A synthetic audio/art project (Unity mixer, Wwise workunit and
+glTF scene) indexed with zero diagnostics, and `cg233_audio_graph` /
+`cg233_art_graph` returned the expected assets and edges over MCP stdio. A real
+third-party project mixing these new languages was not used
 for this validation. Raw third-party artifacts are not shipped. These checks do
 not establish editor business-source recovery, application acceptance or support
 for every language.

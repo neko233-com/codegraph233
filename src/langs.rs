@@ -135,6 +135,79 @@ pub const SPECS: &[LangSpec] = &[
         extensions: &["godot"],
         strict: false,
     },
+    LangSpec {
+        id: "unity_mixer",
+        backend: Backend::Asset,
+        extensions: &["mixer"],
+        strict: false,
+    },
+    LangSpec {
+        id: "wwise_workunit",
+        backend: Backend::Asset,
+        extensions: &["wwu"],
+        strict: false,
+    },
+    LangSpec {
+        id: "wwise_project",
+        backend: Backend::Asset,
+        extensions: &["wproj"],
+        strict: false,
+    },
+    LangSpec {
+        id: "wwise_bank",
+        backend: Backend::Asset,
+        extensions: &["bnk"],
+        strict: false,
+    },
+    LangSpec {
+        id: "wwise_media",
+        backend: Backend::Asset,
+        extensions: &["wem"],
+        strict: false,
+    },
+    LangSpec {
+        id: "fmod_project",
+        backend: Backend::Asset,
+        extensions: &["fspro"],
+        strict: false,
+    },
+    LangSpec {
+        id: "fmod_strings",
+        backend: Backend::Asset,
+        extensions: &["strings"],
+        strict: false,
+    },
+    LangSpec {
+        id: "fmod_bank",
+        backend: Backend::Asset,
+        extensions: &["bank"],
+        strict: false,
+    },
+    LangSpec {
+        id: "gltf",
+        backend: Backend::Asset,
+        extensions: &["gltf", "glb"],
+        strict: false,
+    },
+    LangSpec {
+        id: "aseprite",
+        backend: Backend::Asset,
+        extensions: &["ase", "aseprite"],
+        strict: false,
+    },
+    LangSpec {
+        id: "fbx",
+        backend: Backend::Asset,
+        extensions: &["fbx"],
+        strict: false,
+    },
+    // Path-based frontends expose no extension of their own.
+    LangSpec {
+        id: "upm_manifest",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
 ];
 
 pub fn spec(id: &str) -> Option<&'static LangSpec> {

@@ -16,6 +16,7 @@ mod lexer_langs;
 mod lua_lang;
 mod mcp;
 mod model;
+mod pipeline_assets;
 mod projects;
 mod query;
 mod rust_lang;

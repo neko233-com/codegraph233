@@ -2,7 +2,7 @@
 
 **AST GraphRAG for game projects — Rust 实现。**
 
-索引 C# / Go / Rust / TypeScript / JavaScript / Lua / Java / C / C++ / Python / PowerShell / GDScript / Kotlin / Swift / Objective-C / Dart / Haxe / GameMaker GML / HLSL / GLSL / Metal / WGSL 源码、普通 CLASS/JAR、Unity 与 Unreal Engine 5 / Godot 工程资产、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
+索引 C# / Go / Rust / TypeScript / JavaScript / Lua / Java / C / C++ / Python / PowerShell / GDScript / Kotlin / Swift / Objective-C / Dart / Haxe / GameMaker GML / HLSL / GLSL / Metal / WGSL 源码、普通 CLASS/JAR、Unity 与 Unreal Engine 5 / Godot 工程资产、美术与音频管线资产（glTF / Aseprite / FBX / UPM、Unity AudioMixer / Wwise / FMOD）、游戏资产与配表，通过 MCP 提供给 agent 查询。仓库已从 Go 完全迁移到 Rust（Go 代码已删除，历史基准见 [docs/benchmarks.md](docs/benchmarks.md)）。
 
 ## 能力（Rust 实现）
 
@@ -22,7 +22,9 @@
 | 普通 CLASS / JAR 原生读取、资源哈希与 JVM 描述符关系 | ✅ 0.4.1-dev；不需要 Java 运行时，不执行输入；[格式与边界](docs/jvm-facts.md)，不是反编译器 |
 | Unreal Engine 5 工程资产（`.uproject` / `.uplugin` JSON 模块与插件、`.ini` 的 `/Game/` 与 `/Script/` 引用、`.uasset` / `.umap` 头级包信息） | ✅ 0.4.1-dev；uasset 只读文件头 / 版本 / 名称表样本，不解压属性、不解析蓝图逻辑；[边界](docs/source-frontends.md) |
 | Godot 4 场景与工程（`.tscn` / `.tres` 节点、外部资源、`ExtResource` 实例、`project.godot` 主场景与 autoload） | ✅ 0.4.1-dev；文本格式静态解析，不启动 Godot |
-| 语言注册表与扩展点（`codegraph233 languages`、`extra_extensions` 自定义扩展名映射） | ✅ 0.4.1-dev；22 个代码前端 + 11 个资产 / 引擎前端统一登记 |
+| 语言注册表与扩展点（`codegraph233 languages`、`extra_extensions` 自定义扩展名映射） | ✅ 0.4.1-dev；22 个代码前端 + 11 个资产 / 引擎前端 + 12 个美术 / 音频管线前端统一登记 |
+| 音频管线（Unity AudioMixer `.mixer` group/snapshot/effect、Wwise `.wwu` / `.wproj` / `.bnk` / `.wem`、FMOD `.fspro` / `.strings` / `.bank`） | ✅ 0.4.1-dev；文本工程解析 + BKHD / FSB5 / RIFF 头级信息；不解析音频负载 |
+| 美术管线（glTF `.gltf` / `.glb` 节点 / 网格 / 材质 / 贴图 / 动画 / 蒙皮、Aseprite `.ase` / `.aseprite` 图层与标签、FBX 头、UPM `Packages/manifest.json` / `packages-lock.json`） | ✅ 0.4.1-dev；含 `uses_material` / `uses_texture` / `references` 等资产边；不解码图片或音频负载 |
 | prefab / scene（GameObject 层级、m_Script、嵌套 prefab、guid 引用） | ✅ |
 | shader（Shader / property / include / multi_compile 关键字 / HLSL 函数） | ✅ |
 | 媒体资产（图片宽高、音频采样率/码率/时长、视频时长、字体名与字形数、Spine atlas/skel） | ✅ |
@@ -32,7 +34,7 @@
 | 增量索引（mtime/size）、prune、并行绑定 | ✅ |
 | 增量重绑定（小 delta 只重算相关边，结果与全量重建一致） | ✅ |
 | CLI：`init` / `index` / `status` / `compact` / `register` / `projects` / `languages` / `install-mcp` | ✅ |
-| MCP stdio + 23 个工具 | ✅ |
+| MCP stdio + 25 个工具 | ✅ |
 | 多项目（注册表 `~/.codegraph233/projects.json`、工具 `project` 参数、`cg233_projects`） | ✅ |
 
 ## 安装（全局一次）
@@ -124,7 +126,7 @@ codegraph233 update --disable                      # 关闭自动更新
 ```
 
 * `profile`：`full` / `game` / `code` / `minimal`；`features` 可按项覆盖。
-* `languages` 省略默认 `["csharp"]`；`["auto"]` 表示全部已实现前端（`CODE_LANGUAGES`：csharp / go / rust / typescript / lua / jvm / java / c / cpp / python / powershell / gdscript / kotlin / swift / objc / dart / haxe / gml / hlsl / glsl / metal / wgsl）。`codegraph233 languages` 列出全部登记项及其扩展名。
+* `languages` 省略默认 `["csharp"]`；`["auto"]` 表示全部已实现前端（`CODE_LANGUAGES`：csharp / go / rust / typescript / lua / jvm / java / c / cpp / python / powershell / gdscript / kotlin / swift / objc / dart / haxe / gml / hlsl / glsl / metal / wgsl）。`codegraph233 languages` 列出全部登记项及其扩展名；管线与引擎资产 id（gltf / aseprite / fbx / upm_manifest / unity_mixer / wwise_* / fmod_* 等）同样可用于 `extra_extensions`。
 * `extra_extensions`：把任意扩展名映射到已登记的前端，例如
   `{"extra_extensions": {"gd2": "gdscript", "mm2": "objc", "scene": "godot_scene"}}`。
   键会自动小写并去掉前导 `.`，目标必须是 `codegraph233 languages` 中存在的 id；
@@ -132,7 +134,7 @@ codegraph233 update --disable                      # 关闭自动更新
 * 索引产物：`.codegraph233/index.db`（gitignore，可重建）。schema 版本变化时 `index` 会自动重建，`status` 会提示 `stale schema`。
 * `codegraph233 compact`：`ANALYZE` + `VACUUM`，回收增量索引产生的空闲页。
 
-## MCP 工具（23）
+## MCP 工具（25）
 
 代码图：`cg233_status` / `cg233_index` / `cg233_overview` / `cg233_projects` / `cg233_project_health` /
 `cg233_find_symbol` / `cg233_get_symbol` / `cg233_symbol_path` / `cg233_file_outline` /
@@ -140,6 +142,8 @@ codegraph233 update --disable                      # 关闭自动更新
 
 资产图：`cg233_asset_search` / `cg233_asset_info` / `cg233_asset_refs` / `cg233_asset_tree` /
 `cg233_asset_stats` / `cg233_asset_orphans` / `cg233_guid_lookup`
+
+管线图：`cg233_audio_graph`（AudioMixer / Wwise / FMOD 路由）/ `cg233_art_graph`（glTF / Aseprite / FBX / UPM）
 
 游戏数据：`cg233_shader_info` / `cg233_config_tables` / `cg233_config_readers`
 

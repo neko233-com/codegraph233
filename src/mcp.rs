@@ -76,6 +76,12 @@ fn tools() -> Vec<Value> {
         tool("cg233_asset_orphans", "Unreferenced file-level assets, largest first.", json!({
             "kind": {"type":"string"}, "limit": {"type":"integer"}
         }), json!([])),
+        tool("cg233_audio_graph", "Audio pipeline graph: Unity AudioMixer groups/snapshots, Wwise events/banks, FMOD events/buses and routing edges.", json!({
+            "root": {"type":"string"}, "asset": {"type":"string"}, "limit": {"type":"integer"}
+        }), json!([])),
+        tool("cg233_art_graph", "Art pipeline graph: glTF meshes/materials/textures/animations, Aseprite layers/tags, FBX and Unity UPM package dependencies.", json!({
+            "root": {"type":"string"}, "asset": {"type":"string"}, "limit": {"type":"integer"}
+        }), json!([])),
         tool("cg233_shader_info", "ShaderLab detail: properties, includes, keywords, HLSL functions, users.", json!({
             "key": {"type":"string"}, "path": {"type":"string"}, "limit": {"type":"integer"}
         }), json!([])),
@@ -256,6 +262,24 @@ fn call(default_cfg: &Config, name: &str, args: &Value) -> Result<Value, String>
             &a_str(args, "kind"),
             a_i64(args, "limit", 50)
         )?)),
+        "cg233_audio_graph" => {
+            let root = a_str(args, "root");
+            let asset = a_str(args, "asset");
+            eng.audio_graph(
+                if root.is_empty() { None } else { Some(root.as_str()) },
+                if asset.is_empty() { None } else { Some(asset.as_str()) },
+                a_i64(args, "limit", 300),
+            )
+        }
+        "cg233_art_graph" => {
+            let root = a_str(args, "root");
+            let asset = a_str(args, "asset");
+            eng.art_graph(
+                if root.is_empty() { None } else { Some(root.as_str()) },
+                if asset.is_empty() { None } else { Some(asset.as_str()) },
+                a_i64(args, "limit", 300),
+            )
+        }
         "cg233_shader_info" => eng.shader_info(
             &a_str(args, "key"),
             &a_str(args, "path"),
@@ -320,7 +344,7 @@ pub fn serve(cfg: Config) -> Result<(), String> {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {"name": "codegraph233", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": "AST GraphRAG (Rust). cg233_status first, cg233_index to build/update. Code: cg233_overview / cg233_find_symbol / cg233_symbol_path / cg233_call_graph / cg233_impact. Assets: cg233_asset_search / cg233_asset_tree / cg233_asset_refs / cg233_asset_orphans. Data: cg233_config_tables / cg233_config_readers. Physics: cg233_shader_info. guid: cg233_guid_lookup."
+                    "instructions": "AST GraphRAG (Rust). cg233_status first, cg233_index to build/update. Code: cg233_overview / cg233_find_symbol / cg233_symbol_path / cg233_call_graph / cg233_impact. Assets: cg233_asset_search / cg233_asset_tree / cg233_asset_refs / cg233_asset_orphans. Pipelines: cg233_audio_graph (mixers/Wwise/FMOD) / cg233_art_graph (glTF/Aseprite/FBX/UPM). Data: cg233_config_tables / cg233_config_readers. Physics: cg233_shader_info. guid: cg233_guid_lookup."
                 }
             }),
             "ping" => json!({"jsonrpc":"2.0","id":id,"result":{}}),

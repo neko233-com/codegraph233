@@ -85,6 +85,24 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         "uasset" | "umap" if f.assets => Some("ue_asset"),
         "tscn" | "tres" if f.assets => Some("godot_scene"),
         "godot" if f.assets || f.config_tables => Some("godot_project"),
+        "mixer" if f.assets => Some("unity_mixer"),
+        "wwu" if f.assets => Some("wwise_workunit"),
+        "wproj" if f.assets => Some("wwise_project"),
+        "bnk" if f.assets => Some("wwise_bank"),
+        "wem" if f.assets => Some("wwise_media"),
+        "fspro" if f.assets => Some("fmod_project"),
+        "strings" if f.assets => Some("fmod_strings"),
+        "bank" if f.assets => Some("fmod_bank"),
+        "gltf" | "glb" if f.assets => Some("gltf"),
+        "ase" | "aseprite" if f.assets => Some("aseprite"),
+        "fbx" if f.assets => Some("fbx"),
+        "json"
+            if f.assets
+                && (rel.to_ascii_lowercase().ends_with("packages/manifest.json")
+                    || rel.to_ascii_lowercase().ends_with("packages/packages-lock.json")) =>
+        {
+            Some("upm_manifest")
+        }
         "xlsx" | "csv" | "tsv" if f.config_tables => Some("config"),
         "json" if f.config_tables => {
             let abs = Path::new(rel);
@@ -251,6 +269,12 @@ fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(data) => crate::engine_assets::parse_uasset(&f.rel, &f.root, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
+        "unity_mixer" | "wwise_workunit" | "wwise_project" | "wwise_bank" | "wwise_media"
+        | "fmod_project" | "fmod_strings" | "fmod_bank" | "gltf" | "aseprite" | "fbx"
+        | "upm_manifest" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::pipeline_assets::parse(&f.rel, &f.root, &f.lang, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
         "prefab" => match std::fs::read_to_string(&f.abs) {
             Ok(text) => assets::parse_prefab(&f.rel, &f.root, &text),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
@@ -314,7 +338,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full7";
+const PARSER_VERSION: &str = "0.4.1-full8";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -1109,6 +1133,101 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 1);
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn indexes_art_and_audio_pipeline_assets() {
+        let dir = temp_project("pipeline");
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#,
+        );
+        write(
+            &dir.join("Audio/Main.mixer"),
+            "%YAML 1.1\n--- !u!244 &1\nAudioMixerController:\n  m_Name: Main\n  m_Children:\n  - {fileID: 2}\n--- !u!245 &2\nAudioMixerGroupController:\n  m_Name: Music\n  m_ParentGroup: {fileID: 1}\n",
+        );
+        write(
+            &dir.join("Wwise/Events.wwu"),
+            "<WwiseDocument>\n  <Event Name=\"Play_Footstep\" />\n  <SoundBank Name=\"MainBank\" />\n  <SwitchGroup Name=\"Surface\" />\n</WwiseDocument>\n",
+        );
+        let mut bank = Vec::new();
+        bank.extend_from_slice(b"BKHD");
+        bank.extend_from_slice(&4u32.to_le_bytes());
+        bank.extend_from_slice(&150u32.to_le_bytes());
+        bank.extend_from_slice(&1234u32.to_le_bytes());
+        bank.extend_from_slice(&0u32.to_le_bytes());
+        write_bytes(&dir.join("Wwise/Main.bnk"), &bank);
+        write(
+            &dir.join("FMOD/Game.fspro"),
+            r#"{"name":"Game","events":[{"name":"event:/Footstep"}],"buses":[{"name":"bus:/SFX"}],"banks":[{"name":"Master"}]}"#,
+        );
+        write_bytes(
+            &dir.join("FMOD/Desktop.strings"),
+            b"event:/Footstep\0event:/Impact\0",
+        );
+        let mut fsb = Vec::new();
+        fsb.extend_from_slice(b"FSB5");
+        fsb.extend_from_slice(&1u32.to_le_bytes());
+        fsb.extend_from_slice(&2u32.to_le_bytes());
+        fsb.extend_from_slice(&0u32.to_le_bytes());
+        fsb.extend_from_slice(&0u32.to_le_bytes());
+        fsb.extend_from_slice(&16u32.to_le_bytes());
+        fsb.extend_from_slice(&0u32.to_le_bytes());
+        write_bytes(&dir.join("FMOD/Desktop.bank"), &fsb);
+        write(
+            &dir.join("Art/Hero.gltf"),
+            r#"{"asset":{"version":"2.0","generator":"test"},"nodes":[{"name":"Root"}],"meshes":[{"name":"Body","primitives":[{"material":0}]}],"materials":[{"name":"Skin"}],"images":[{"uri":"textures/hero.png"}],"textures":[{"source":0}],"animations":[{"name":"Idle"}],"skins":[{"name":"Rig"}]}"#,
+        );
+        let mut fbx = Vec::new();
+        fbx.extend_from_slice(b"Kaydara FBX Binary  \x00");
+        fbx.extend_from_slice(&[0x1A, 0x00]);
+        fbx.extend_from_slice(&7400u32.to_le_bytes());
+        write_bytes(&dir.join("Art/Hero.fbx"), &fbx);
+        write(
+            &dir.join("Packages/manifest.json"),
+            r#"{"dependencies":{"com.unity.inputsystem":"1.7.0","com.unity.render-pipelines.universal":"14.0.0"}}"#,
+        );
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+        let store = Store::open(&cfg.db_path(), false).unwrap();
+        let kinds: Vec<String> = store
+            .conn
+            .prepare("SELECT DISTINCT kind FROM assets")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .flatten()
+            .collect();
+        for kind in [
+            "audio_mixer_group",
+            "wwise_event",
+            "wwise_bank",
+            "fmod_event",
+            "fmod_bank",
+            "gltf_scene",
+            "gltf_mesh",
+            "gltf_material",
+            "fbx",
+            "upm_manifest",
+            "upm_package",
+        ] {
+            assert!(kinds.iter().any(|k| k == kind), "missing {kind}: {kinds:?}");
+        }
+        let edges: Vec<(String, String, String)> = store
+            .conn
+            .prepare("SELECT src, dst, kind FROM asset_edges")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        for kind in ["routes_to", "uses_material", "references"] {
+            assert!(edges.iter().any(|e| e.2 == kind), "missing edge {kind}: {edges:?}");
+        }
         drop(store);
         let _ = fs::remove_dir_all(&dir);
     }

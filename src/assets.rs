@@ -28,6 +28,16 @@ pub fn asset_kind(rel: &str) -> &'static str {
         "asmdef" => "assembly_def",
         "spriteatlas" => "sprite_atlas",
         "shader" | "hlsl" | "cginc" | "compute" => "shader",
+        "wwu" => "wwise_workunit",
+        "wproj" => "wwise_project",
+        "bnk" => "wwise_bank",
+        "wem" => "audio",
+        "fspro" => "fmod_project",
+        "strings" => "fmod_strings",
+        "bank" => "fmod_bank",
+        "gltf" | "glb" => "gltf_scene",
+        "ase" | "aseprite" => "aseprite",
+        "fbx" => "fbx",
         "asset" => "scriptable_asset",
         "json" => "json_asset",
         "meta" => "meta",
@@ -45,7 +55,8 @@ pub fn is_asset_ext(rel: &str) -> bool {    let ext = Path::new(rel)
             | "webp" | "hdr" | "dds" | "wav" | "mp3" | "ogg" | "oga" | "m4a" | "aac" | "flac"
             | "aif" | "aiff" | "wma" | "mp4" | "mov" | "webm" | "mkv" | "avi" | "m4v" | "ttf"
             | "otf" | "ttc" | "atlas" | "skel" | "mat" | "anim" | "controller" | "mixer"
-            | "playable" | "asmdef" | "spriteatlas" | "meta"
+            | "playable" | "asmdef" | "spriteatlas" | "meta" | "wwu" | "wproj" | "bnk" | "wem"
+            | "fspro" | "strings" | "bank" | "gltf" | "glb" | "ase" | "aseprite" | "fbx"
     )
 }
 

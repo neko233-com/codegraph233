@@ -9,6 +9,55 @@ pub struct Engine {
     pub cfg: Config,
 }
 
+const AUDIO_GRAPH_KINDS: &[&str] = &[
+    "audio",
+    "audio_mixer",
+    "audio_mixer_group",
+    "audio_mixer_snapshot",
+    "audio_mixer_effect",
+    "wwise_workunit",
+    "wwise_project",
+    "wwise_event",
+    "wwise_switch_group",
+    "wwise_state_group",
+    "wwise_rtpc",
+    "wwise_bank",
+    "wwise_aux_bus",
+    "wwise_audio_device",
+    "wwise_effect",
+    "wwise_external_source",
+    "wwise_object",
+    "wwise_media",
+    "fmod_project",
+    "fmod_strings",
+    "fmod_event",
+    "fmod_bus",
+    "fmod_vca",
+    "fmod_bank",
+];
+
+const ART_GRAPH_KINDS: &[&str] = &[
+    "gltf_scene",
+    "gltf_node",
+    "gltf_mesh",
+    "gltf_material",
+    "gltf_texture",
+    "gltf_image",
+    "gltf_animation",
+    "gltf_skin",
+    "aseprite",
+    "aseprite_layer",
+    "aseprite_tag",
+    "fbx",
+    "upm_manifest",
+    "upm_lock",
+    "upm_package",
+    "image",
+    "material",
+    "font",
+    "shader",
+];
+
 impl Engine {
     pub fn open(cfg: &Config) -> Result<Engine, String> {
         let store = Store::open(&cfg.db_path(), false)?;
@@ -422,6 +471,121 @@ impl Engine {
             out.push(row.map_err(|e| e.to_string())?);
         }
         Ok(out)
+    }
+
+    pub fn audio_graph(
+        &self,
+        root: Option<&str>,
+        asset: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        self.pipeline_graph("audio", AUDIO_GRAPH_KINDS, root, asset, limit)
+    }
+
+    pub fn art_graph(
+        &self,
+        root: Option<&str>,
+        asset: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        self.pipeline_graph("art", ART_GRAPH_KINDS, root, asset, limit)
+    }
+
+    fn pipeline_graph(
+        &self,
+        domain: &str,
+        kinds: &[&str],
+        root: Option<&str>,
+        asset: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        let limit = limit.clamp(1, 2000);
+        let placeholders = vec!["?"; kinds.len()].join(",");
+        let mut sql = format!(
+            "SELECT asset_key, kind, path, COALESCE(name,'') FROM assets WHERE kind IN ({placeholders})"
+        );
+        let mut params_v: Vec<String> = kinds.iter().map(|s| s.to_string()).collect();
+        if let Some(r) = root {
+            sql.push_str(" AND root = ?");
+            params_v.push(r.to_string());
+        }
+        if let Some(a) = asset {
+            sql.push_str(" AND (asset_key = ? OR path = ?)");
+            params_v.push(a.to_string());
+            params_v.push(a.to_string());
+        }
+        sql.push_str(&format!(" ORDER BY kind, path LIMIT {limit}"));
+
+        let mut stmt = self.store.conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params_v.iter().map(|s| s.as_str())),
+                |r| {
+                    Ok(json!({
+                        "key": r.get::<_, String>(0)?,
+                        "kind": r.get::<_, String>(1)?,
+                        "path": r.get::<_, String>(2)?,
+                        "name": r.get::<_, String>(3)?,
+                    }))
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        let mut assets = Vec::new();
+        for row in rows {
+            assets.push(row.map_err(|e| e.to_string())?);
+        }
+        let keys: Vec<String> = assets
+            .iter()
+            .filter_map(|a| a["key"].as_str().map(|s| s.to_string()))
+            .collect();
+        let mut edges = Vec::new();
+        if !keys.is_empty() {
+            let ph = vec!["?"; keys.len()].join(",");
+            let esql = format!(
+                "SELECT e.src, e.dst, e.kind, COALESCE(e.detail,''), COALESCE(e.line,0),
+                        COALESCE(a.name,''), COALESCE(b.name,'')
+                 FROM asset_edges e LEFT JOIN assets a ON a.asset_key=e.src
+                 LEFT JOIN assets b ON b.asset_key=e.dst
+                 WHERE e.src IN ({ph}) OR e.dst IN ({ph})
+                 ORDER BY e.src, e.kind, e.dst LIMIT {limit}"
+            );
+            let mut stmt = self.store.conn.prepare(&esql).map_err(|e| e.to_string())?;
+            let iter = keys
+                .iter()
+                .map(|s| s.as_str())
+                .chain(keys.iter().map(|s| s.as_str()));
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(iter), |r| {
+                    Ok(json!({
+                        "src": r.get::<_, String>(0)?,
+                        "dst": r.get::<_, String>(1)?,
+                        "kind": r.get::<_, String>(2)?,
+                        "detail": r.get::<_, String>(3)?,
+                        "line": r.get::<_, i32>(4)?,
+                        "src_name": r.get::<_, String>(5)?,
+                        "dst_name": r.get::<_, String>(6)?,
+                    }))
+                })
+                .map_err(|e| e.to_string())?;
+            for row in rows {
+                edges.push(row.map_err(|e| e.to_string())?);
+            }
+        }
+        let mut by_kind: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for a in &assets {
+            if let Some(k) = a["kind"].as_str() {
+                *by_kind.entry(k.to_string()).or_insert(0) += 1;
+            }
+        }
+        Ok(json!({
+            "domain": domain,
+            "root": root,
+            "asset_count": assets.len(),
+            "edge_count": edges.len(),
+            "kinds": by_kind,
+            "assets": assets,
+            "edges": edges,
+        }))
     }
 
     pub fn guid_lookup(&self, sel: &str, limit: i64) -> Result<Vec<Value>, String> {

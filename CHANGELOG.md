@@ -2,6 +2,12 @@
 
 ## 0.4.1-dev — unreleased
 
+- Index art and audio pipeline assets: Unity AudioMixer groups/snapshots/effects
+  with `routes_to` routing; Wwise workunits/projects/bank/media headers; FMOD
+  project/string-table/FSB5 banks; glTF/GLB nodes, meshes, materials, textures,
+  images, animations and skins with material/texture/URI edges; Aseprite layers
+  and tags; FBX headers; Unity UPM `manifest.json`/`packages-lock.json` packages.
+  Add `cg233_audio_graph` and `cg233_art_graph` MCP tools (25 total).
 - Index Unreal Engine 5 project assets: `.uproject`/`.uplugin` JSON modules,
   plugin dependencies and class redirects; `.ini` sections/keys with `/Game/`
   content paths and `/Script/` class references; `.uasset`/`.umap` header-level
