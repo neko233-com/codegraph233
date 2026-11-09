@@ -14,6 +14,7 @@ mod jvm_facts;
 mod jvm_binary;
 mod langs;
 mod source_ast;
+mod sql;
 mod quiet;
 mod powershell_ast;
 mod lexer;

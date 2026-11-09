@@ -412,6 +412,15 @@ pub const SPECS: &[LangSpec] = &[
         extensions: &["tex", "latex"],
         strict: false,
     },
+    LangSpec {
+        id: "sql",
+        backend: Backend::Lexical,
+        extensions: &[
+            "sql", "psql", "pgsql", "mysql", "sqlite", "sqlite3", "tsql", "mssql", "plsql",
+            "pkb", "pks", "cql",
+        ],
+        strict: false,
+    },
 ];
 
 pub fn spec(id: &str) -> Option<&'static LangSpec> {

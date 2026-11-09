@@ -22,7 +22,7 @@
 | 普通 CLASS / JAR 原生读取、资源哈希与 JVM 描述符关系 | ✅ 0.4.1-dev；不需要 Java 运行时，不执行输入；[格式与边界](docs/jvm-facts.md)，不是反编译器 |
 | Unreal Engine 5 工程资产（`.uproject` / `.uplugin` JSON 模块与插件、`.ini` 的 `/Game/` 与 `/Script/` 引用、`.uasset` / `.umap` 头级包信息） | ✅ 0.4.1-dev；uasset 只读文件头 / 版本 / 名称表样本，不解压属性、不解析蓝图逻辑；[边界](docs/source-frontends.md) |
 | Godot 4 场景与工程（`.tscn` / `.tres` 节点、外部资源、`ExtResource` 实例、`project.godot` 主场景与 autoload） | ✅ 0.4.1-dev；文本格式静态解析，不启动 Godot |
-| 语言注册表与扩展点（`codegraph233 languages`、`extra_extensions` 自定义扩展名映射） | ✅ 0.4.1-dev；22 个代码前端 + 11 个资产 / 引擎前端 + 12 个美术 / 音频管线前端 + 5 个设计 / 叙事前端 + 5 个本地化 / CSV 前端 + 8 个依赖清单前端 + 6 个 CI / 构建前端 + 4 个 Office / PDF 前端 + 6 个法律 / 出版 / 文本前端（共 79 项）统一登记 |
+| 语言注册表与扩展点（`codegraph233 languages`、`extra_extensions` 自定义扩展名映射） | ✅ 0.4.1-dev；22 个代码前端 + 11 个资产 / 引擎前端 + 12 个美术 / 音频管线前端 + 5 个设计 / 叙事前端 + 5 个本地化 / CSV 前端 + 8 个依赖清单前端 + 6 个 CI / 构建前端 + 4 个 Office / PDF 前端 + 6 个法律 / 出版 / 文本前端 + 1 个 SQL 前端（共 80 项）统一登记 |
 | 音频管线（Unity AudioMixer `.mixer` group/snapshot/effect、Wwise `.wwu` / `.wproj` / `.bnk` / `.wem`、FMOD `.fspro` / `.strings` / `.bank`） | ✅ 0.4.1-dev；文本工程解析 + BKHD / FSB5 / RIFF 头级信息；不解析音频负载 |
 | 美术管线（glTF `.gltf` / `.glb` 节点 / 网格 / 材质 / 贴图 / 动画 / 蒙皮、Aseprite `.ase` / `.aseprite` 图层与标签、FBX 头、UPM `Packages/manifest.json` / `packages-lock.json`） | ✅ 0.4.1-dev；含 `uses_material` / `uses_texture` / `references` 等资产边；不解码图片或音频负载 |
 | 策划 / 叙事 / 媒体（Markdown 策划案的 `@id` / `@code` / `@asset` / `@audio` / `@video` / `@art` / `@story` / `@value` / `@text` 标记与 `[[...]]` 关联、Yarn / Ink 剧情脚本、`.srt` / `.vtt` 字幕、`.webm` / `.mkv` 头） | ✅ 0.4.1-dev；代码侧 `@design:` / `@spec:` / `@doc:` 注释生成 `implements` 边，形成策划 → 代码 → 资产全链路；不执行脚本 |
@@ -32,6 +32,7 @@
 | CI / 构建管线（Jenkinsfile、`.github/workflows/*.yml`、`.gitlab-ci.yml`、`azure-pipelines.yml`、CircleCI、Makefile） | ✅ 0.4.1-dev；行级静态解析，不执行任何流水线；stage / job / step / target 与 `uses_action` / `uses_stage` / `runs` / `depends_on` 关系，`cg233_ci_graph` 查询 |
 | Office 与 PDF（DOCX 标题 / 段落 / 表格与 `@code` / `[[REQ]]` 标记、PPTX 幻灯片、PDF 页数 / Info / FlateDecode 文本、旧版 DOC/PPT/XLS 识别提示） | ✅ 0.4.1-dev；ZIP/XML 与 PDF 流静态读取，不执行宏、不做 OCR 或 CMap 排版还原；图表、批注、嵌入对象不索引；`cg233_document_graph` 查询；可用于软著、版号、专利、法务材料与代码 / 需求的关联 |
 | 法律 / 专利 / 出版文本（TXT、RTF、ODT、EPUB、HTML、LaTeX） | ✅ 0.4.1-dev；专利权利要求（`CLAIMS` / 权利要求书，编号 claim 与 `claims` 边）、法务条款（`第 N 条` / `Article N`，`legal_clause`）、专利号（CN/US/WO/EP/JP/KR）、章节、LaTeX 引用；统一走标记者 / 法务扫描，`cg233_document_graph` 查询 |
+| SQL（`.sql` / `.psql` / `.pgsql` / `.mysql` / `.sqlite` / `.tsql` / `.mssql` / `.plsql` / `.pkb` / `.pks` / `.cql`） | ✅ 0.4.1-dev；DDL 表 / 列 / 视图 / 索引 / 存储过程 / 触发器，`references` / `reads` / `writes` / `indexed_on` / `triggered_on` 关系；代码字面量 SQL 生成 `queries` 边；`cg233_sql_graph` 查询；不连接数据库、不执行 SQL |
 | prefab / scene（GameObject 层级、m_Script、嵌套 prefab、guid 引用） | ✅ |
 | shader（Shader / property / include / multi_compile 关键字 / HLSL 函数） | ✅ |
 | 媒体资产（图片宽高、音频采样率/码率/时长、视频时长、字体名与字形数、Spine atlas/skel） | ✅ |
@@ -42,7 +43,7 @@
 | 增量重绑定（小 delta 只重算相关边，结果与全量重建一致） | ✅ |
 | 冷热分离与持续开发刷新（`hot_days` 热/冷文件分层、`heatmap` 统计、`watch` 轮询增量索引、`cg233_heatmap` / `cg233_refresh`） | ✅ |
 | CLI：`init` / `index` / `watch` / `status` / `heatmap` / `compact` / `register` / `projects` / `languages` / `install-mcp` | ✅ |
-| MCP stdio + 34 个工具 | ✅ |
+| MCP stdio + 35 个工具 | ✅ |
 | 多项目（注册表 `~/.codegraph233/projects.json`、工具 `project` 参数、`cg233_projects`） | ✅ |
 
 ## 安装（全局一次）
@@ -152,7 +153,7 @@ codegraph233 update --disable                      # 关闭自动更新
 * 索引产物：`.codegraph233/index.db`（gitignore，可重建）。schema 版本变化时 `index` 会自动重建，`status` 会提示 `stale schema`。
 * `codegraph233 compact`：`ANALYZE` + `VACUUM`，回收增量索引产生的空闲页。
 
-## MCP 工具（34）
+## MCP 工具（35）
 
 代码图：`cg233_status` / `cg233_index` / `cg233_overview` / `cg233_projects` / `cg233_project_health` /
 `cg233_find_symbol` / `cg233_get_symbol` / `cg233_symbol_path` / `cg233_file_outline` /
@@ -161,7 +162,7 @@ codegraph233 update --disable                      # 关闭自动更新
 资产图：`cg233_asset_search` / `cg233_asset_info` / `cg233_asset_refs` / `cg233_asset_tree` /
 `cg233_asset_stats` / `cg233_asset_orphans` / `cg233_guid_lookup`
 
-管线图：`cg233_audio_graph`（AudioMixer / Wwise / FMOD 路由）/ `cg233_art_graph`（glTF / Aseprite / FBX / UPM）/ `cg233_design_graph`（策划案 / 剧情 / 代码标记）/ `cg233_localization_graph`（PO / XLIFF / RESX / ARB 文案状态）/ `cg233_localization_report`（占位符 / 超长 / 未翻译 / 重复 key 聚合 QA）/ `cg233_audio_events`（代码 → Wwise / FMOD 事件绑定）/ `cg233_dependencies`（npm / Cargo / Go / Python / vcpkg / Conan / NuGet / Maven 依赖聚合）/ `cg233_ci_graph`（Jenkins / GitHub Actions / GitLab / Azure / CircleCI / Make 构建图）/ `cg233_document_graph`（DOCX / PPTX / PDF / 法律 / 专利 / 纯文本、标记与需求关联）/ `cg233_heatmap`（热 / 冷文件分层）/ `cg233_refresh`（mtime 增量刷新）
+管线图：`cg233_audio_graph`（AudioMixer / Wwise / FMOD 路由）/ `cg233_art_graph`（glTF / Aseprite / FBX / UPM）/ `cg233_design_graph`（策划案 / 剧情 / 代码标记）/ `cg233_localization_graph`（PO / XLIFF / RESX / ARB 文案状态）/ `cg233_localization_report`（占位符 / 超长 / 未翻译 / 重复 key 聚合 QA）/ `cg233_audio_events`（代码 → Wwise / FMOD 事件绑定）/ `cg233_dependencies`（npm / Cargo / Go / Python / vcpkg / Conan / NuGet / Maven 依赖聚合）/ `cg233_ci_graph`（Jenkins / GitHub Actions / GitLab / Azure / CircleCI / Make 构建图）/ `cg233_document_graph`（DOCX / PPTX / PDF / 法律 / 专利 / 纯文本、标记与需求关联）/ `cg233_sql_graph`（SQL 表 / 列 / 视图 / 索引 / 过程 / 触发器与代码字面量查询）/ `cg233_heatmap`（热 / 冷文件分层）/ `cg233_refresh`（mtime 增量刷新）
 
 游戏数据：`cg233_shader_info` / `cg233_config_tables` / `cg233_config_readers`
 

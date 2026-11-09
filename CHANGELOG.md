@@ -2,6 +2,16 @@
 
 ## 0.4.1-dev — unreleased
 
+- Add SQL schema frontends (`.sql`, `.psql`, `.pgsql`, `.mysql`, `.sqlite`,
+  `.tsql`, `.mssql`, `.plsql`, `.pkb`, `.pks`, `.cql`): tables, columns, views,
+  indexes, routines and triggers with `references`, `reads`, `writes`,
+  `indexed_on` and `triggered_on` edges, plus `queries` edges from literal SQL in
+  source files. Parsing is statement-oriented with comments, strings and
+  dollar-quoted bodies masked; no database connection is opened and no SQL is
+  executed. Expose `cg233_sql_graph` (35 MCP tools, 80 registry entries).
+- Improve index and query performance: add `(kind,path)` and edge-kind indexes,
+  enable a 256 MiB SQLite mmap window, and run `PRAGMA optimize` after each
+  index pass.
 - Add legal/patent/publishing text frontends: TXT (BOM-aware UTF-8/UTF-16),
   RTF, ODT, EPUB, HTML and LaTeX. A shared bounded scanner extracts numbered
   patent claims (`patent_claim` + `claims` edges), `第 N 条`/`Article N` legal

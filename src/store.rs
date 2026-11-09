@@ -36,10 +36,12 @@ CREATE TABLE IF NOT EXISTS assets (
   path TEXT, name TEXT, unity_id TEXT, line INTEGER, meta TEXT);
 CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
 CREATE INDEX IF NOT EXISTS idx_assets_kind ON assets(kind);
+CREATE INDEX IF NOT EXISTS idx_assets_kind_path ON assets(kind, path);
 CREATE TABLE IF NOT EXISTS asset_edges (
   src TEXT NOT NULL, dst TEXT NOT NULL, kind TEXT NOT NULL, line INTEGER, detail TEXT, root TEXT);
 CREATE INDEX IF NOT EXISTS idx_asset_edges_src ON asset_edges(src);
 CREATE INDEX IF NOT EXISTS idx_asset_edges_dst ON asset_edges(dst);
+CREATE INDEX IF NOT EXISTS idx_asset_edges_kind ON asset_edges(kind);
 CREATE TABLE IF NOT EXISTS guid_map (guid TEXT PRIMARY KEY, path TEXT NOT NULL, name TEXT, type TEXT);
 "#;
 
@@ -69,7 +71,7 @@ impl Store {
         } else {
             conn.execute_batch(
                 "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY;
-                 PRAGMA cache_size=-32000; PRAGMA busy_timeout=8000;",
+                 PRAGMA cache_size=-32000; PRAGMA mmap_size=268435456; PRAGMA busy_timeout=8000;",
             )
             .map_err(|e| e.to_string())?;
         }

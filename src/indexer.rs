@@ -142,6 +142,8 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         "epub" if f.assets => Some("epub"),
         "html" | "htm" if f.assets => Some("html"),
         "tex" | "latex" if f.assets => Some("latex"),
+        "sql" | "psql" | "pgsql" | "mysql" | "sqlite" | "sqlite3" | "tsql" | "mssql" | "plsql"
+        | "pkb" | "pks" | "cql" if f.assets || f.code => Some("sql"),
         "tscn" | "tres" if f.assets => Some("godot_scene"),
         "godot" if f.assets || f.config_tables => Some("godot_project"),
         "mixer" if f.assets => Some("unity_mixer"),
@@ -307,6 +309,8 @@ fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
                 }
                 fp.asset_edges
                     .extend(crate::audio_refs::scan(&f.rel, &f.root, text));
+                fp.asset_edges
+                    .extend(crate::sql::scan_code(&f.rel, &f.root, text));
             }
         }
     }
@@ -375,6 +379,10 @@ fn parse_file_inner(f: &ScanFile, cfg: &Config) -> FileParse {
         "docx" | "pptx" | "pdf" | "legacy_office" | "plain_text" | "rtf" | "odt"
         | "epub" | "html" | "latex" => match std::fs::read(&f.abs) {
             Ok(data) => crate::docs::parse(&f.rel, &f.root, &f.lang, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
+        "sql" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::sql::parse(&f.rel, &f.root, &f.lang, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
         "design_doc" | "yarn_script" | "ink_script" | "subtitle" | "video" => match std::fs::read(&f.abs) {
@@ -471,7 +479,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full14";
+const PARSER_VERSION: &str = "0.4.1-full15";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -794,6 +802,9 @@ pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
         );
     }
 
+    // Keep planner statistics fresh after a large delta without a full VACUUM.
+    let _ = store.conn.query_row("PRAGMA optimize", [], |_| Ok(()));
+
     Ok(Stats {
         files: fcount,
         changed: changed.len(),
@@ -866,6 +877,7 @@ pub fn status(cfg: &Config) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::Engine;
     use crate::config;
     use std::fs;
 
@@ -1961,6 +1973,88 @@ mod tests {
 
         let report = eng.document_graph(Some("app"), None, 200).unwrap();
         assert!(report["asset_count"].as_i64().unwrap() >= 8);
+
+        drop(eng);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn indexes_sql_schema_and_literal_queries() {
+        let dir = temp_project("sql-graph");
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#,
+        );
+        write(
+            &dir.join("db/schema.sql"),
+            r#"CREATE TABLE public.users (
+    id BIGSERIAL PRIMARY KEY,
+    email TEXT NOT NULL,
+    org_id BIGINT REFERENCES public.orgs(id)
+);
+CREATE TABLE orgs (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE
+);
+CREATE VIEW active_users AS SELECT id, email FROM users WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX idx_users_email ON users (email);
+CREATE OR REPLACE FUNCTION touch_user() RETURNS trigger AS $$
+BEGIN
+    UPDATE users SET id = id WHERE false;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_users AFTER UPDATE ON users FOR EACH ROW EXECUTE FUNCTION touch_user();
+ALTER TABLE users ADD CONSTRAINT users_org_fk FOREIGN KEY (org_id) REFERENCES orgs(id);
+"#,
+        );
+        write(
+            &dir.join("src/Repo.cs"),
+            "public sealed class Repo {\n    public object? Load(long id) {\n        return _db.Query<object>(\"SELECT id, email FROM Users WHERE id = @id\", new { id });\n    }\n\n    public void Rename(string name) {\n        _db.Execute(\"UPDATE orgs SET name = @name\", new { name });\n    }\n}\n",
+        );
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0, "sql parse errors");
+        let eng = Engine::open(&cfg).unwrap();
+
+        let mut stmt = eng.store.conn.prepare("SELECT DISTINCT kind FROM assets").unwrap();
+        let kinds: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap().flatten().collect();
+        drop(stmt);
+        for kind in [
+            "sql_script",
+            "sql_table",
+            "sql_column",
+            "sql_view",
+            "sql_index",
+            "sql_routine",
+            "sql_trigger",
+        ] {
+            assert!(kinds.iter().any(|k| k == kind), "missing kind {kind}: {kinds:?}");
+        }
+
+        let mut stmt = eng.store.conn.prepare("SELECT src, dst, kind FROM asset_edges").unwrap();
+        let edges: Vec<(String, String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        drop(stmt);
+        let has = |kind: &str, dst: &str| edges.iter().any(|(_, d, k)| k == kind && d == dst);
+        assert!(has("references", "sql_table:app:orgs"), "foreign key edges: {edges:?}");
+        assert!(has("reads", "sql_table:app:users"), "view reads");
+        assert!(has("writes", "sql_table:app:users"), "routine writes");
+        assert!(has("indexed_on", "sql_table:app:users"), "index target");
+        assert!(has("triggered_on", "sql_table:app:users"), "trigger target");
+        assert!(
+            edges.iter().any(|(src, dst, kind)| src == "asset:app:src/Repo.cs"
+                && kind == "queries"
+                && (dst == "sql_table:app:users" || dst == "sql_table:app:orgs")),
+            "literal SQL edges: {edges:?}"
+        );
+
+        let report = eng.sql_graph(Some("app"), None, 200).unwrap();
+        assert!(report["asset_count"].as_i64().unwrap() >= 7);
 
         drop(eng);
         let _ = fs::remove_dir_all(&dir);

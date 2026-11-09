@@ -59,6 +59,7 @@ frontends remain controlled by project profile/features.
 | `.epub` | EPUB: `META-INF/container.xml` → OPF manifest/spine chapters, first heading/title per chapter; no CSS or media decoding |
 | `.html`, `.htm` | HTML: `<title>`, h1-h3 sections, relative `<a href>` links as `doc_link` edges; scripts/styles stripped |
 | `.tex`, `.latex` | LaTeX: `\\title`, chapter/section/subsection headings, `\\cite{...}` keys; no macro expansion or bibliography resolution |
+| `.sql`, `.psql`, `.pgsql`, `.mysql`, `.sqlite`, `.sqlite3`, `.tsql`, `.mssql`, `.plsql`, `.pkb`, `.pks`, `.cql` | SQL DDL schema graph: tables, columns, views, indexes, routines and triggers with foreign-key `references`, view/routine `reads`/`writes`, `indexed_on`/`triggered_on`; semicolons inside strings, comments and dollar-quoted bodies are masked; no connection and no execution |
 
 These are static navigation aids, not complete compilers, type checkers, macro
 preprocessors, runtime traces or source recovery tools. Known JNI/Windows
@@ -253,6 +254,18 @@ development, `codegraph233 watch --interval SECONDS [--once]` and the
 bounded change counters, so an agent can refresh and re-query without reloading
 the graph or re-reading files.
 
+SQL inputs are parsed statement by statement after masking `--`/`/* */` comments,
+single-quoted strings and dollar-quoted bodies, so quoted DDL and procedural
+bodies do not confuse the splitter. Tables are keyed by their last name segment
+with the schema retained in metadata, which links schema-qualified DDL to
+unqualified references from views, routines and code. `cg233_sql_graph` returns
+the token-bounded schema graph; source files are additionally scanned for literal
+`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`JOIN` strings and linked with `queries`
+edges (1 MiB per file, 100 refs per file). Nothing connects to a database and no
+SQL is executed. Limits: 20,000 statements, 500 tables, 500 columns per table;
+`ALTER TABLE` is understood for `REFERENCES` only, and vendor-specific procedural
+semantics are not evaluated.
+
 Specify project roots on every MCP call. Roots are directories; excludes match
 directory basenames or root-relative prefixes, **not globs**. Keep caches and
 third-party inputs ignored. Parser/config changes invalidate old indexes; do
@@ -308,9 +321,13 @@ more: six frontend tests (plain text claims/clauses/patent numbers, RTF title
 and claims, ODT headings/metadata, EPUB spine chapters, HTML title/links, LaTeX
 sections/citations), one indexer integration test covering all six formats and
 the `patent_claim`/`legal_clause` kinds, one hot/cold + `refresh` incremental
-integration test and one `hot_days` configuration test.
+integration test and one `hot_days` configuration test. The SQL work adds 5
+more: four frontend tests (tables/columns/foreign keys, views/routines/indexes/
+triggers, quoted identifiers with comments and string semicolons, code literal
+queries) and one indexer integration test covering DDL, FK references, view
+reads, routine writes, index/trigger targets and source `queries` edges.
 The
-full suite is 117 tests passing on Windows x64/Rust 1.99. A synthetic 10-file
+full suite is 122 tests passing on Windows x64/Rust 1.99. A synthetic 10-file
 project with `languages: ["auto"]`
 was indexed end-to-end (zero parse diagnostics, all 22 frontends enabled), and
 the existing `testdata/multi` fixture re-indexed without regressions in its C#,

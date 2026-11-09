@@ -99,6 +99,16 @@ const DOC_GRAPH_KINDS: &[&str] = &[
     "legal_clause",
 ];
 
+const SQL_GRAPH_KINDS: &[&str] = &[
+    "sql_script",
+    "sql_table",
+    "sql_column",
+    "sql_view",
+    "sql_index",
+    "sql_routine",
+    "sql_trigger",
+];
+
 impl Engine {
     pub fn open(cfg: &Config) -> Result<Engine, String> {
         let store = Store::open(&cfg.db_path(), false)?;
@@ -557,6 +567,17 @@ impl Engine {
         limit: i64,
     ) -> Result<Value, String> {
         self.pipeline_graph("docs", DOC_GRAPH_KINDS, root, asset, limit)
+    }
+
+    /// Schema graph: tables/columns/FKs, views, routines, indexes and triggers,
+    /// plus literal-SQL `queries` edges from application code.
+    pub fn sql_graph(
+        &self,
+        root: Option<&str>,
+        asset: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        self.pipeline_graph("sql", SQL_GRAPH_KINDS, root, asset, limit)
     }
 
     pub fn localization_graph(
