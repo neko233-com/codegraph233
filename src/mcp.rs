@@ -103,6 +103,12 @@ fn tools() -> Vec<Value> {
         tool("cg233_document_graph", "Office/PDF document graph: DOCX headings and markers, PPTX slides, PDF page/text metadata and @code/@asset/[[REQ]] links to source and requirements.", json!({
             "root": {"type":"string"}, "asset": {"type":"string"}, "limit": {"type":"integer"}
         }), json!([])),
+        tool("cg233_heatmap", "Hot/cold file split: hot files were modified within hot_days (default from config, 30), cold files are older; returns counts, bytes and the oldest cold paths so agents can prioritise refreshes.", json!({
+            "root": {"type":"string"}, "hot_days": {"type":"integer"}, "limit": {"type":"integer"}
+        }), json!([])),
+        tool("cg233_refresh", "Incremental reindex (mtime/size driven) for change-driven loops; returns changed/removed counters and elapsed_ms. Use force=true only when parsers or config changed.", json!({
+            "force": {"type":"boolean"}
+        }), json!([])),
         tool("cg233_shader_info", "ShaderLab detail: properties, includes, keywords, HLSL functions, users.", json!({
             "key": {"type":"string"}, "path": {"type":"string"}, "limit": {"type":"integer"}
         }), json!([])),
@@ -360,12 +366,23 @@ fn call(default_cfg: &Config, name: &str, args: &Value) -> Result<Value, String>
                 a_i64(args, "limit", 300),
             )
         }
+        "cg233_heatmap" => {
+            let root = a_str(args, "root");
+            eng.heatmap(
+                if root.is_empty() { None } else { Some(root.as_str()) },
+                args.get("hot_days").and_then(|v| v.as_u64()),
+                a_i64(args, "limit", 200),
+            )
+        }
+        "cg233_refresh" => eng.refresh(
+            args.get("force").and_then(|v| v.as_bool()).unwrap_or(false),
+            true,
+        ),
         "cg233_shader_info" => eng.shader_info(
             &a_str(args, "key"),
             &a_str(args, "path"),
             a_i64(args, "limit", 100),
-        ),
-        "cg233_config_tables" => Ok(json!(eng.config_tables(
+        ),        "cg233_config_tables" => Ok(json!(eng.config_tables(
             &a_str(args, "root"),
             &a_str(args, "path"),
             a_i64(args, "limit", 100)
@@ -424,7 +441,7 @@ pub fn serve(cfg: Config) -> Result<(), String> {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {"name": "codegraph233", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": "AST GraphRAG (Rust). cg233_status first, cg233_index to build/update. Code: cg233_overview / cg233_find_symbol / cg233_symbol_path / cg233_call_graph / cg233_impact. Assets: cg233_asset_search / cg233_asset_tree / cg233_asset_refs / cg233_asset_orphans. Pipelines: cg233_audio_graph (mixers/Wwise/FMOD) / cg233_art_graph (glTF/Aseprite/FBX/UPM) / cg233_design_graph (design docs/narrative/code markers) / cg233_localization_graph (PO/XLIFF/RESX/ARB text status) / cg233_localization_report (translations QA) / cg233_audio_events (code→Wwise/FMOD bindings). Data: cg233_config_tables / cg233_config_readers / cg233_dependencies (manifest package graph) / cg233_ci_graph (Jenkins/GitHub/GitLab/Azure/CircleCI/Make) / cg233_document_graph (DOCX/PPTX/PDF legal & design docs). Physics: cg233_shader_info. guid: cg233_guid_lookup."
+                    "instructions": "AST GraphRAG (Rust). cg233_status first, cg233_index to build/update. Code: cg233_overview / cg233_find_symbol / cg233_symbol_path / cg233_call_graph / cg233_impact. Assets: cg233_asset_search / cg233_asset_tree / cg233_asset_refs / cg233_asset_orphans. Pipelines: cg233_audio_graph (mixers/Wwise/FMOD) / cg233_art_graph (glTF/Aseprite/FBX/UPM) / cg233_design_graph (design docs/narrative/code markers) / cg233_localization_graph (PO/XLIFF/RESX/ARB text status) / cg233_localization_report (translations QA) / cg233_audio_events (code→Wwise/FMOD bindings). Data: cg233_config_tables / cg233_config_readers / cg233_dependencies (manifest package graph) / cg233_ci_graph (Jenkins/GitHub/GitLab/Azure/CircleCI/Make) / cg233_document_graph (DOCX/PPTX/PDF legal & design docs). Freshness: cg233_heatmap (hot/cold files) / cg233_refresh (incremental reindex). Physics: cg233_shader_info. guid: cg233_guid_lookup."
                 }
             }),
             "ping" => json!({"jsonrpc":"2.0","id":id,"result":{}}),

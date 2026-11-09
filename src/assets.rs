@@ -48,6 +48,7 @@ pub fn asset_kind(rel: &str) -> &'static str {
         "arb" => "localization",
         "docx" | "pdf" | "doc" | "ppt" | "xls" => "document",
         "pptx" => "presentation",
+        "txt" | "text" | "rtf" | "odt" | "epub" | "html" | "htm" | "tex" | "latex" => "document",
         "asset" => "scriptable_asset",
         "json" => "json_asset",
         "meta" => "meta",
@@ -70,6 +71,7 @@ pub fn is_asset_ext(rel: &str) -> bool {    let ext = Path::new(rel)
             | "md" | "markdown" | "yarn" | "ink" | "srt" | "vtt"
             | "po" | "pot" | "xliff" | "xlf" | "resx" | "arb"
             | "docx" | "pptx" | "pdf" | "doc" | "ppt" | "xls"
+            | "txt" | "text" | "rtf" | "odt" | "epub" | "html" | "htm" | "tex" | "latex"
     )
 }
 

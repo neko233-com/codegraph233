@@ -53,6 +53,12 @@ frontends remain controlled by project profile/features.
 | `.pptx` | PowerPoint OOXML: first-slide title, one `doc_slide` per slide, run text; layouts, notes, media payloads and SmartArt are not decoded |
 | `.pdf` | PDF 1.x header: version, page count, Info title/author/created and FlateDecode text literals; not OCR, not CMap/embedded-font layout, encrypted or non-Flate streams are skipped |
 | `.doc`, `.ppt`, `.xls` | Legacy binary Office detected and reported with a conversion hint; content is not parsed |
+| `.txt`, `.text` | Plain text: UTF-8/UTF-16 BOM-aware decode, heading sections, patent claims, legal clauses, patent numbers and the shared design markers |
+| `.rtf` | RTF groups with `\\par`/`\\tab`/`\\'hh`/`\\uN`, skipped font/color/picture destinations and the `{\\title ...}` group |
+| `.odt` | OpenDocument: `content.xml` headings (`text:outline-level`) and paragraphs, `meta.xml` title/author/created |
+| `.epub` | EPUB: `META-INF/container.xml` → OPF manifest/spine chapters, first heading/title per chapter; no CSS or media decoding |
+| `.html`, `.htm` | HTML: `<title>`, h1-h3 sections, relative `<a href>` links as `doc_link` edges; scripts/styles stripped |
+| `.tex`, `.latex` | LaTeX: `\\title`, chapter/section/subsection headings, `\\cite{...}` keys; no macro expansion or bibliography resolution |
 
 These are static navigation aids, not complete compilers, type checkers, macro
 preprocessors, runtime traces or source recovery tools. Known JNI/Windows
@@ -226,6 +232,27 @@ explicit conversion diagnostic instead of opaque silence. `cg233_document_graph`
 returns the token-bounded document graph, and Excel workbooks keep using the
 existing per-sheet `config_table` frontend.
 
+Legal, patent and publishing text inputs share one bounded scanner. A
+`CLAIMS`/`权利要求书`/`What is claimed` section yields numbered `patent_claim`
+assets (`claims` edges, `claim_count`/`claims_dialect` metadata, bounded at 100);
+`第 N 条` and `Article N`/`Clause N`/`Section N` headings yield `legal_clause`
+assets with `contains` edges (bounded at 200); CN/US/WO/EP/JP/KR patent numbers
+are recorded on the file asset. The same text is scanned for `@code:`,
+`@asset:`, `@audio:`, `@story:`, `@text:` and `[[REQ-...]]` markers, so a
+software-copyright manuscript, patent draft or contract can link to code and
+design requirements without any document-specific integration. TXT decoding
+honours UTF-8 and UTF-16 byte-order marks; RTF, ODT, EPUB, HTML and LaTeX are
+read as text/XML only and never executed.
+
+Freshness is reported, not enforced: `hot_days` (default 30, bounded 0-3650)
+classifies files by mtime into hot/cold buckets, `codegraph233 heatmap` and
+`cg233_heatmap` return counts, bytes and the oldest cold paths, and `status`
+prints a short freshness line. Every file remains fully indexed. For continuous
+development, `codegraph233 watch --interval SECONDS [--once]` and the
+`cg233_refresh` MCP tool run the existing mtime/size incremental index and return
+bounded change counters, so an agent can refresh and re-query without reloading
+the graph or re-reading files.
+
 Specify project roots on every MCP call. Roots are directories; excludes match
 directory basenames or root-relative prefixes, **not globs**. Keep caches and
 third-party inputs ignored. Parser/config changes invalidate old indexes; do
@@ -276,8 +303,14 @@ asset kinds and the `uses_action`/`uses_stage`/`runs`/`depends_on` edges. The
 Office/PDF work adds 5 more: four frontend tests (DOCX headings/markers/metadata,
 PPTX slides, PDF pages/title/stream text, malformed PDF and legacy Office) and
 one indexer integration test covering DOCX/PPTX/PDF asset kinds, the document
-`contains` edges and a DOCX `@code` link. The
-full suite is 108 tests passing on Windows x64/Rust 1.99. A synthetic 10-file
+`contains` edges and a DOCX `@code` link. The legal/patent/text work adds 9
+more: six frontend tests (plain text claims/clauses/patent numbers, RTF title
+and claims, ODT headings/metadata, EPUB spine chapters, HTML title/links, LaTeX
+sections/citations), one indexer integration test covering all six formats and
+the `patent_claim`/`legal_clause` kinds, one hot/cold + `refresh` incremental
+integration test and one `hot_days` configuration test.
+The
+full suite is 117 tests passing on Windows x64/Rust 1.99. A synthetic 10-file
 project with `languages: ["auto"]`
 was indexed end-to-end (zero parse diagnostics, all 22 frontends enabled), and
 the existing `testdata/multi` fixture re-indexed without regressions in its C#,

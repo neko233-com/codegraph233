@@ -59,6 +59,10 @@ pub struct RawConfig {
     /// (audio stems, design folders, naming conventions) without a parser.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_rules: Vec<LinkRule>,
+    /// Files modified within this many days are "hot"; older files are "cold".
+    /// Purely a query/reporting classification; every file is still indexed.
+    #[serde(default)]
+    pub hot_days: Option<u64>,
 }
 
 /// One declarative relationship: every indexed path matching `include` gets an
@@ -106,6 +110,9 @@ pub struct Config {
     pub extra_extensions: BTreeMap<String, String>,
     /// Validated, bounded path-based relationship rules.
     pub link_rules: Vec<LinkRule>,
+    /// Files modified within this many days are reported as hot. Every file is
+    /// still indexed; this only labels freshness in status/query output.
+    pub hot_days: u64,
 }
 
 /// Code languages with a dedicated source frontend. `jvm` covers CLASS/JAR
@@ -172,6 +179,10 @@ pub fn load(start: &Path) -> Result<Config, String> {
     }
     let extra_extensions = normalize_extra_extensions(&raw.extra_extensions)?;
     let link_rules = validate_link_rules(&raw.link_rules)?;
+    let hot_days = raw.hot_days.unwrap_or(30);
+    if hot_days > 3650 {
+        return Err("hot_days must be between 0 and 3650".into());
+    }
     let features = resolve_features(&raw);
     Ok(Config {
         dir,
@@ -180,6 +191,7 @@ pub fn load(start: &Path) -> Result<Config, String> {
         features,
         extra_extensions,
         link_rules,
+        hot_days,
     })
 }
 
@@ -473,5 +485,27 @@ mod tests {
         .unwrap();
         let err = load(&dir).unwrap_err();
         assert!(err.contains("not a registered language"), "{err}");
+    }
+
+    #[test]
+    fn hot_days_defaults_and_is_bounded() {
+        let dir = temp_dir("hot-days");
+        std::fs::write(dir.join(CONFIG_NAME), r#"{"version":1,"profile":"code"}"#).unwrap();
+        assert_eq!(load(&dir).unwrap().hot_days, 30);
+
+        std::fs::write(
+            dir.join(CONFIG_NAME),
+            r#"{"version":1,"profile":"code","hot_days":7}"#,
+        )
+        .unwrap();
+        assert_eq!(load(&dir).unwrap().hot_days, 7);
+
+        std::fs::write(
+            dir.join(CONFIG_NAME),
+            r#"{"version":1,"profile":"code","hot_days":99999}"#,
+        )
+        .unwrap();
+        let err = load(&dir).unwrap_err();
+        assert!(err.contains("hot_days"), "{err}");
     }
 }

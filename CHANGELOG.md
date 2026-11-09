@@ -2,6 +2,18 @@
 
 ## 0.4.1-dev — unreleased
 
+- Add legal/patent/publishing text frontends: TXT (BOM-aware UTF-8/UTF-16),
+  RTF, ODT, EPUB, HTML and LaTeX. A shared bounded scanner extracts numbered
+  patent claims (`patent_claim` + `claims` edges), `第 N 条`/`Article N` legal
+  clauses (`legal_clause` + `contains` edges) and CN/US/WO/EP/JP/KR patent
+  numbers, and every format also honours the existing `@code`/`@asset`/
+  `[[REQ-...]]` markers. Add six registry entries (79 registry entries).
+- Add hot/cold freshness and continuous-development refresh: `hot_days`
+  (default 30, bounded 0-3650) classifies files by mtime, `codegraph233
+  heatmap` / `cg233_heatmap` report hot/cold counts, bytes and the oldest cold
+  paths, `status` prints a freshness line, and `codegraph233 watch` plus
+  `cg233_refresh` run the mtime/size incremental index and return bounded
+  change counters (34 MCP tools).
 - Add Office/PDF document frontends: DOCX heading/paragraph/table metadata with
   `doc_section` assets, PPTX slides as `doc_slide` assets, PDF version/page
   count/Info metadata and FlateDecode text literals, and explicit diagnostics for

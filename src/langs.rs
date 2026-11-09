@@ -376,6 +376,42 @@ pub const SPECS: &[LangSpec] = &[
         extensions: &["doc", "ppt", "xls"],
         strict: false,
     },
+    LangSpec {
+        id: "plain_text",
+        backend: Backend::Asset,
+        extensions: &["txt", "text"],
+        strict: false,
+    },
+    LangSpec {
+        id: "rtf",
+        backend: Backend::Asset,
+        extensions: &["rtf"],
+        strict: false,
+    },
+    LangSpec {
+        id: "odt",
+        backend: Backend::Asset,
+        extensions: &["odt"],
+        strict: false,
+    },
+    LangSpec {
+        id: "epub",
+        backend: Backend::Asset,
+        extensions: &["epub"],
+        strict: false,
+    },
+    LangSpec {
+        id: "html",
+        backend: Backend::Asset,
+        extensions: &["html", "htm"],
+        strict: false,
+    },
+    LangSpec {
+        id: "latex",
+        backend: Backend::Asset,
+        extensions: &["tex", "latex"],
+        strict: false,
+    },
 ];
 
 pub fn spec(id: &str) -> Option<&'static LangSpec> {

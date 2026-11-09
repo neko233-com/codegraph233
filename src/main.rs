@@ -51,7 +51,9 @@ fn usage() {
         "codegraph233 (Rust) — AST GraphRAG indexer\n\
          \n\
          codegraph233 index  [--root PATH] [--force] [--jobs N] [--profile P] [--safe] [--quiet]\n\
+         codegraph233 watch  [--root PATH] [--interval SECONDS] [--once]\n\
          codegraph233 status [--root PATH]\n\
+         codegraph233 heatmap [--root PATH] [--hot-days N] [--json]\n\
          codegraph233 languages [--json]\n\
          codegraph233 compact [--root PATH]\n\
          codegraph233 register|unregister [--root PATH]\n\
@@ -144,6 +146,24 @@ fn main() {
             );
             if st.indexed_at > 0 {
                 println!("indexed:  {}", st.indexed_at);
+            }
+            if let Ok(eng) = query::Engine::open(&cfg) {
+                if let Ok(map) = eng.heatmap(None, None, 5) {
+                    println!(
+                        "freshness: hot={} cold={} hot_days={} (cold sample below)",
+                        map["hot_files"], map["cold_files"], map["hot_days"]
+                    );
+                    if let Some(rows) = map["cold_files_sample"].as_array() {
+                        for row in rows {
+                            println!(
+                                "  cold: {} [{}] {}d old",
+                                row["path"].as_str().unwrap_or(""),
+                                row["lang"].as_str().unwrap_or(""),
+                                row["age_days"]
+                            );
+                        }
+                    }
+                }
             }
         }
         "init" => {
@@ -315,6 +335,96 @@ fn main() {
                     Some(s) => println!("{:<24} {:<52} files={} symbols={} indexed={}", p.name, p.root, s.files, s.symbols, s.exists),
                     None => println!("{:<24} {:<52} (config missing)", p.name, p.root),
                 }
+            }
+        }
+        "heatmap" => {
+            let cfg = match config::load(&root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let eng = match query::Engine::open(&cfg) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let days = arg_value(&rest, "--hot-days").and_then(|v| v.parse::<u64>().ok());
+            match eng.heatmap(None, days, 50) {
+                Ok(map) => {
+                    if has_flag(&rest, "--json") {
+                        println!("{}", serde_json::to_string_pretty(&map).unwrap_or_default());
+                    } else {
+                        println!(
+                            "hot:  {} files, {} bytes (mtime within {} days)",
+                            map["hot_files"], map["hot_bytes"], map["hot_days"]
+                        );
+                        println!(
+                            "cold: {} files, {} bytes",
+                            map["cold_files"], map["cold_bytes"]
+                        );
+                        if let Some(rows) = map["cold_files_sample"].as_array() {
+                            for row in rows {
+                                println!(
+                                    "  {} [{}] {}d",
+                                    row["path"].as_str().unwrap_or(""),
+                                    row["lang"].as_str().unwrap_or(""),
+                                    row["age_days"]
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        "watch" => {
+            let cfg = match config::load(&root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let once = has_flag(&rest, "--once");
+            let interval = arg_value(&rest, "--interval")
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(3)
+                .clamp(1, 3600);
+            let mut last: Option<(usize, usize)> = None;
+            loop {
+                let opts = indexer::Options {
+                    force: false,
+                    jobs: 0,
+                    quiet: true,
+                    fast: false,
+                };
+                match indexer::run(&cfg, &opts) {
+                    Ok(stats) => {
+                        if last.map(|(c, r)| c != stats.changed || r != stats.removed).unwrap_or(true)
+                        {
+                            println!(
+                                "{{\"changed\":{},\"removed\":{},\"files\":{},\"symbols\":{},\"assets\":{},\"parse_errors\":{},\"elapsed_ms\":{}}}",
+                                stats.changed, stats.removed, stats.files, stats.symbols, stats.assets, stats.parse_errors, stats.elapsed_ms
+                            );
+                        }
+                        last = Some((stats.changed, stats.removed));
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                if once {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(interval));
             }
         }
         "serve" | "mcp" => {

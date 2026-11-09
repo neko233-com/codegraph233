@@ -136,6 +136,12 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         "pptx" if f.assets => Some("pptx"),
         "pdf" if f.assets => Some("pdf"),
         "doc" | "ppt" | "xls" if f.assets => Some("legacy_office"),
+        "txt" | "text" if f.assets => Some("plain_text"),
+        "rtf" if f.assets => Some("rtf"),
+        "odt" if f.assets => Some("odt"),
+        "epub" if f.assets => Some("epub"),
+        "html" | "htm" if f.assets => Some("html"),
+        "tex" | "latex" if f.assets => Some("latex"),
         "tscn" | "tres" if f.assets => Some("godot_scene"),
         "godot" if f.assets || f.config_tables => Some("godot_project"),
         "mixer" if f.assets => Some("unity_mixer"),
@@ -366,7 +372,8 @@ fn parse_file_inner(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(data) => crate::engine_assets::parse_uasset(&f.rel, &f.root, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
-        "docx" | "pptx" | "pdf" | "legacy_office" => match std::fs::read(&f.abs) {
+        "docx" | "pptx" | "pdf" | "legacy_office" | "plain_text" | "rtf" | "odt"
+        | "epub" | "html" | "latex" => match std::fs::read(&f.abs) {
             Ok(data) => crate::docs::parse(&f.rel, &f.root, &f.lang, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
@@ -464,7 +471,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full13";
+const PARSER_VERSION: &str = "0.4.1-full14";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -1805,6 +1812,155 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name, "Manual");
+
+        drop(eng);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn heatmap_and_refresh_track_incremental_changes() {
+        let dir = temp_project("heat");
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"],"hot_days":1}"#,
+        );
+        write(&dir.join("src/A.cs"), "public class A { public void run() {} }\n");
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+
+        let eng = crate::query::Engine::open(&cfg).unwrap();
+        let map = eng.heatmap(None, None, 10).unwrap();
+        assert_eq!(map["hot_days"].as_u64(), Some(1));
+        assert!(map["hot_files"].as_i64().unwrap() >= 1);
+        assert_eq!(map["cold_files"].as_i64(), Some(0));
+
+        write(
+            &dir.join("src/A.cs"),
+            "public class A { public void run() {} public void stop() {} }\n",
+        );
+        let refreshed = eng.refresh(false, true).unwrap();
+        assert!(refreshed["changed"].as_u64().unwrap() >= 1);
+        let second = eng.refresh(false, true).unwrap();
+        assert_eq!(second["changed"].as_u64(), Some(0));
+
+        // Simulate a cold file: stored mtimes are nanoseconds since the epoch.
+        let old = crate::store::now_unix().saturating_mul(1_000_000_000)
+            - 40 * 86_400_000_000_000;
+        eng.store
+            .conn
+            .execute(
+                "UPDATE files SET mtime=?1 WHERE path='src/A.cs'",
+                rusqlite::params![old],
+            )
+            .unwrap();
+        let cold = eng.heatmap(None, None, 10).unwrap();
+        assert_eq!(cold["cold_files"].as_i64(), Some(1));
+        assert!(cold["newest_mtime"].as_i64().unwrap() < 90_000_000_000);
+
+        drop(eng);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn indexes_legal_patent_and_plain_text_formats() {
+        use std::io::Write as _;
+
+        fn zip_bytes(files: &[(&str, &str)]) -> Vec<u8> {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default();
+            for (name, content) in files {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(content.as_bytes()).unwrap();
+            }
+            writer.finish().unwrap().into_inner()
+        }
+
+        let dir = temp_project("legal-docs");
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#,
+        );
+        write(
+            &dir.join("legal/Contract.txt"),
+            "Patent Application\n\nCLAIMS\n1. A method for indexing games.\n2. The method of claim 1.\n\nArticle 1: Scope\nThis contract covers CN123456789A.\n",
+        );
+        write(
+            &dir.join("legal/Memo.rtf"),
+            r"{\rtf1{\info{\title Memo}}{\b CLAIMS}\par Claim 1. A device\par}",
+        );
+        write_bytes(
+            &dir.join("legal/Report.odt"),
+            &zip_bytes(&[
+                (
+                    "content.xml",
+                    r#"<office:document-content><office:body><office:text><text:h text:outline-level="1">Claims</text:h><text:p>1. A device.</text:p></office:text></office:body></office:document-content>"#,
+                ),
+                (
+                    "meta.xml",
+                    r#"<office:document-meta><meta:meta><dc:title>Report</dc:title></meta:meta></office:document-meta>"#,
+                ),
+            ]),
+        );
+        write_bytes(
+            &dir.join("books/Book.epub"),
+            &zip_bytes(&[
+                (
+                    "META-INF/container.xml",
+                    r#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#,
+                ),
+                (
+                    "OEBPS/content.opf",
+                    r#"<package><metadata><dc:title>Book</dc:title></metadata><manifest><item id="c1" href="chapter1.xhtml"/></manifest><spine><itemref idref="c1"/></spine></package>"#,
+                ),
+                (
+                    "OEBPS/chapter1.xhtml",
+                    r#"<html><head><title>Chapter One</title></head><body><h1>Chapter One</h1></body></html>"#,
+                ),
+            ]),
+        );
+        write(
+            &dir.join("docs/page.html"),
+            r#"<html><head><title>Combat</title></head><body><h1>Combat</h1><a href="specs/Combat.md">spec</a></body></html>"#,
+        );
+        write(
+            &dir.join("docs/Paper.tex"),
+            r"\documentclass{article}\title{Graph Paper}\begin{document}\section{Introduction}\cite{a,b}\end{document}",
+        );
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+        let eng = crate::query::Engine::open(&cfg).unwrap();
+
+        let mut stmt = eng
+            .store
+            .conn
+            .prepare("SELECT DISTINCT kind FROM assets ORDER BY kind")
+            .unwrap();
+        let kinds: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap().flatten().collect();
+        drop(stmt);
+        for kind in ["document", "patent_claim", "legal_clause", "doc_section"] {
+            assert!(kinds.iter().any(|k| k == kind), "missing kind {kind}: {kinds:?}");
+        }
+
+        let mut stmt = eng
+            .store
+            .conn
+            .prepare("SELECT src, dst, kind FROM asset_edges")
+            .unwrap();
+        let edges: Vec<(String, String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        drop(stmt);
+        assert!(edges.iter().any(|(_, _, kind)| kind == "claims"));
+        assert!(edges.iter().any(|(_, dst, kind)| dst == "asset:app:docs/specs/Combat.md" && kind == "doc_link"));
+
+        let report = eng.document_graph(Some("app"), None, 200).unwrap();
+        assert!(report["asset_count"].as_i64().unwrap() >= 8);
 
         drop(eng);
         let _ = fs::remove_dir_all(&dir);

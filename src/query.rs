@@ -95,6 +95,8 @@ const DOC_GRAPH_KINDS: &[&str] = &[
     "presentation",
     "doc_section",
     "doc_slide",
+    "patent_claim",
+    "legal_clause",
 ];
 
 impl Engine {
@@ -949,6 +951,155 @@ impl Engine {
             "package_count": package_count,
             "manifest_count": manifests.len(),
             "packages": packages,
+        }))
+    }
+
+    /// Freshness split over indexed files. Files modified within `hot_days`
+    /// are hot; older files are cold. This only labels work priorities — every
+    /// file stays fully indexed and queryable.
+    pub fn heatmap(
+        &self,
+        root: Option<&str>,
+        hot_days: Option<u64>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        let days = hot_days.unwrap_or(self.cfg.hot_days);
+        let now = crate::store::now_unix();
+        // File mtimes are stored in nanoseconds since the Unix epoch.
+        let now_ns = now.saturating_mul(1_000_000_000);
+        let cutoff = now_ns.saturating_sub(days as i64 * 86_400_000_000_000);
+        let limit = limit.clamp(1, 500);
+        let (files, bytes, oldest, newest): (i64, i64, i64, i64) = match root {
+            Some(root) => self
+                .store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*), COALESCE(SUM(size),0), COALESCE(MIN(mtime),0), COALESCE(MAX(mtime),0) FROM files WHERE root=?1",
+                    params![root],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .map_err(|e| e.to_string())?,
+            None => self
+                .store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*), COALESCE(SUM(size),0), COALESCE(MIN(mtime),0), COALESCE(MAX(mtime),0) FROM files",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .map_err(|e| e.to_string())?,
+        };
+        let (hot_files, hot_bytes): (i64, i64) = match root {
+            Some(root) => self
+                .store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*), COALESCE(SUM(size),0) FROM files WHERE mtime>=?1 AND root=?2",
+                    params![cutoff, root],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|e| e.to_string())?,
+            None => self
+                .store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*), COALESCE(SUM(size),0) FROM files WHERE mtime>=?1",
+                    params![cutoff],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|e| e.to_string())?,
+        };
+        let mut stmt = match root {
+            Some(_) => self
+                .store
+                .conn
+                .prepare(
+                    "SELECT path, lang, size, mtime FROM files WHERE mtime<?1 AND root=?2 ORDER BY mtime ASC, path LIMIT ?3",
+                )
+                .map_err(|e| e.to_string())?,
+            None => self
+                .store
+                .conn
+                .prepare(
+                    "SELECT path, lang, size, mtime FROM files WHERE mtime<?1 ORDER BY mtime ASC, path LIMIT ?2",
+                )
+                .map_err(|e| e.to_string())?,
+        };
+        let sample: Vec<Value> = match root {
+            Some(root) => stmt
+                .query_map(params![cutoff, root, limit], |r| {
+                    let path: String = r.get(0)?;
+                    let lang: String = r.get(1)?;
+                    let size: i64 = r.get(2)?;
+                    let mtime: i64 = r.get(3)?;
+                    Ok(json!({
+                        "path": path,
+                        "lang": lang,
+                        "size": size,
+                        "age_days": ((now_ns - mtime).max(0) / 86_400_000_000_000),
+                        "mtime": mtime / 1_000_000_000,
+                    }))
+                })
+                .map_err(|e| e.to_string())?
+                .filter_map(Result::ok)
+                .collect(),
+            None => stmt
+                .query_map(params![cutoff, limit], |r| {
+                    let path: String = r.get(0)?;
+                    let lang: String = r.get(1)?;
+                    let size: i64 = r.get(2)?;
+                    let mtime: i64 = r.get(3)?;
+                    Ok(json!({
+                        "path": path,
+                        "lang": lang,
+                        "size": size,
+                        "age_days": ((now_ns - mtime).max(0) / 86_400_000_000_000),
+                        "mtime": mtime / 1_000_000_000,
+                    }))
+                })
+                .map_err(|e| e.to_string())?
+                .filter_map(Result::ok)
+                .collect(),
+        };
+        drop(stmt);
+        Ok(json!({
+            "root": root,
+            "hot_days": days,
+            "cutoff": cutoff / 1_000_000_000,
+            "now": now,
+            "files": files,
+            "hot_files": hot_files,
+            "cold_files": files - hot_files,
+            "bytes": bytes,
+            "hot_bytes": hot_bytes,
+            "cold_bytes": bytes - hot_bytes,
+            "oldest_mtime": oldest / 1_000_000_000,
+            "newest_mtime": newest / 1_000_000_000,
+            "cold_files_sample": sample,
+        }))
+    }
+
+    /// Incremental reindex for change-driven loops. Returns bounded counters so
+    /// an agent can refresh and immediately re-query without re-reading files.
+    pub fn refresh(&self, force: bool, quiet: bool) -> Result<Value, String> {
+        let opts = crate::indexer::Options {
+            force,
+            jobs: 0,
+            quiet,
+            fast: false,
+        };
+        let stats = crate::indexer::run(&self.cfg, &opts)?;
+        Ok(json!({
+            "files": stats.files,
+            "changed": stats.changed,
+            "removed": stats.removed,
+            "symbols": stats.symbols,
+            "refs": stats.refs,
+            "edges": stats.edges,
+            "assets": stats.assets,
+            "unresolved": stats.unresolved,
+            "parse_errors": stats.parse_errors,
+            "elapsed_ms": stats.elapsed_ms,
         }))
     }
 

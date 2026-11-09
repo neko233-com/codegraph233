@@ -58,6 +58,7 @@ pub fn init(dir: &Path, backend: Option<&str>, profile: &str) -> Result<PathBuf,
         c_annotations: Vec::new(),
         extra_extensions: Default::default(),
         link_rules: Vec::new(),
+        hot_days: None,
     };
     let text = serde_json::to_string_pretty(&raw).map_err(|e| e.to_string())?;
     fs::write(&path, format!("{text}\n")).map_err(|e| e.to_string())?;
