@@ -556,12 +556,17 @@ mod tests {
             {"name": "codegraph233-0.4.0-x86_64-unknown-linux-gnu.tar.gz",
              "browser_download_url": "https://e/linux.tar.gz", "size": 10},
             {"name": "codegraph233-0.4.0-x86_64-pc-windows-msvc.zip",
-             "browser_download_url": "https://e/win.zip", "size": 20}
+             "browser_download_url": "https://e/win.zip", "size": 20},
+            {"name": "codegraph233-0.4.0-aarch64-apple-darwin.tar.gz",
+             "browser_download_url": "https://e/mac.tar.gz", "size": 30}
         ]);
         let picked = pick_asset(&assets).expect("asset");
-        if std::env::consts::OS == "windows" {
-            assert_eq!(picked.0, "codegraph233-0.4.0-x86_64-pc-windows-msvc.zip");
-        }
+        let want = match std::env::consts::OS {
+            "windows" => "windows",
+            "macos" => "apple",
+            _ => "linux",
+        };
+        assert!(picked.0.contains(want), "picked {:?} on {}", picked.0, std::env::consts::OS);
         assert!(picked.2 > 0);
     }
 
