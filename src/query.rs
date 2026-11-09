@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::store::Store;
 use rusqlite::params;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 pub struct Engine {
@@ -547,6 +548,274 @@ impl Engine {
         };
         value["untranslated"] = json!(count);
         Ok(value)
+    }
+
+    /// Localization QA over the already-indexed entries.
+    ///
+    /// Returns aggregates plus at most `limit` issues so agents can decide what
+    /// to fix without pulling the whole text graph into their context.
+    pub fn localization_report(&self, root: Option<&str>, limit: i64) -> Result<Value, String> {
+        let limit = limit.clamp(1, 500) as usize;
+        const MAX_SCAN: usize = 50_000;
+        let mut sql = String::from(
+            "SELECT COALESCE(path,''), COALESCE(name,''), COALESCE(meta,'{}')
+             FROM assets WHERE kind='localization_entry'",
+        );
+        let mut params_v: Vec<String> = Vec::new();
+        if let Some(r) = root {
+            sql.push_str(" AND root = ?");
+            params_v.push(r.to_string());
+        }
+        sql.push_str(" ORDER BY path, name");
+        let mut stmt = self.store.conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params_v.iter().map(|s| s.as_str())),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        let mut entries: Vec<(String, String, Value)> = Vec::new();
+        let mut truncated = false;
+        for row in rows {
+            let (path, name, meta) = row.map_err(|e| e.to_string())?;
+            if entries.len() >= MAX_SCAN {
+                truncated = true;
+                break;
+            }
+            entries.push((
+                path,
+                name,
+                serde_json::from_str::<Value>(&meta).unwrap_or_else(|_| json!({})),
+            ));
+        }
+
+        let mut translated = 0i64;
+        let mut fuzzy = 0i64;
+        let mut untranslated = 0i64;
+        let mut languages: BTreeMap<String, i64> = BTreeMap::new();
+        let mut by_kind: BTreeMap<String, i64> = BTreeMap::new();
+        let mut issues: Vec<Value> = Vec::new();
+        let mut issue_count = 0i64;
+        let mut seen: BTreeMap<(String, String, String), i64> = BTreeMap::new();
+
+        for (path, name, meta) in &entries {
+            let status = meta["status"].as_str().unwrap_or("");
+            match status {
+                "translated" => translated += 1,
+                "fuzzy" => fuzzy += 1,
+                "untranslated" => untranslated += 1,
+                _ => {}
+            }
+            if !status.is_empty() {
+                *by_kind.entry(status.to_string()).or_insert(0) += 1;
+            }
+            let language = meta["language"].as_str().unwrap_or("");
+            if !language.is_empty() {
+                *languages.entry(language.to_string()).or_insert(0) += 1;
+            }
+            *seen
+                .entry((path.clone(), name.clone(), language.to_string()))
+                .or_insert(0) += 1;
+
+            let source = meta["source"].as_str().unwrap_or("");
+            let target = meta["target"].as_str().unwrap_or("");
+            if status == "translated" && target.is_empty() {
+                issue_count += 1;
+                *by_kind.entry("missing_target".into()).or_insert(0) += 1;
+                if issues.len() < limit {
+                    issues.push(json!({"kind":"missing_target","key":name,"path":path}));
+                }
+                continue;
+            }
+            if source.is_empty() || target.is_empty() {
+                continue;
+            }
+            let source_ph = placeholders(source);
+            let target_ph = placeholders(target);
+            if source_ph != target_ph {
+                issue_count += 1;
+                *by_kind.entry("placeholder_mismatch".into()).or_insert(0) += 1;
+                if issues.len() < limit {
+                    issues.push(json!({
+                        "kind": "placeholder_mismatch",
+                        "key": name,
+                        "path": path,
+                        "source_placeholders": source_ph,
+                        "target_placeholders": target_ph,
+                    }));
+                }
+            }
+            let source_chars = source.chars().count();
+            let target_chars = target.chars().count();
+            if target_chars > source_chars * 2 + 24 && target_chars > 40 {
+                issue_count += 1;
+                *by_kind.entry("overlong".into()).or_insert(0) += 1;
+                if issues.len() < limit {
+                    issues.push(json!({
+                        "kind": "overlong",
+                        "key": name,
+                        "path": path,
+                        "source_chars": source_chars,
+                        "target_chars": target_chars,
+                    }));
+                }
+            }
+        }
+
+        for ((path, name, language), count) in seen {
+            if count > 1 {
+                issue_count += 1;
+                *by_kind.entry("duplicate_key".into()).or_insert(0) += 1;
+                if issues.len() < limit {
+                    issues.push(json!({
+                        "kind": "duplicate_key",
+                        "key": name,
+                        "path": path,
+                        "language": language,
+                        "count": count,
+                    }));
+                }
+            }
+        }
+
+        Ok(json!({
+            "entry_count": entries.len(),
+            "scanned": entries.len(),
+            "truncated": truncated,
+            "translated": translated,
+            "fuzzy": fuzzy,
+            "untranslated": untranslated,
+            "languages": languages,
+            "by_kind": by_kind,
+            "issue_count": issue_count,
+            "issues": issues,
+        }))
+    }
+
+    /// Gameplay call sites that play Wwise/FMOD events, aggregated per event.
+    ///
+    /// `audio_refs::scan` stores edges to `audio_event:{name}`; this method joins
+    /// those names to indexed Wwise/FMOD event assets without emitting one row
+    /// per call site.
+    pub fn audio_events(&self, root: Option<&str>, limit: i64) -> Result<Value, String> {
+        let limit = limit.clamp(1, 500) as usize;
+        let mut sql = String::from(
+            "SELECT COALESCE(a.path,''), COALESCE(e.line,0), COALESCE(e.detail,''), e.dst, e.src
+             FROM asset_edges e LEFT JOIN assets a ON a.asset_key=e.src
+             WHERE e.kind='plays_audio'",
+        );
+        let mut params_v: Vec<String> = Vec::new();
+        if let Some(r) = root {
+            sql.push_str(" AND e.root = ?");
+            params_v.push(r.to_string());
+        }
+        sql.push_str(" ORDER BY e.dst, a.path, e.line");
+        let mut stmt = self.store.conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params_v.iter().map(|s| s.as_str())),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i32>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        let mut groups: BTreeMap<String, Vec<(String, i32, String)>> = BTreeMap::new();
+        for row in rows {
+            let (path, line, detail, dst, src) = row.map_err(|e| e.to_string())?;
+            let path = if path.is_empty() {
+                src.strip_prefix("asset:")
+                    .and_then(|rest| rest.split_once(':'))
+                    .map(|(_, p)| p.to_string())
+                    .unwrap_or_default()
+            } else {
+                path
+            };
+            if let Some(event) = dst.strip_prefix("audio_event:") {
+                groups
+                    .entry(event.to_string())
+                    .or_default()
+                    .push((path, line, detail));
+            }
+        }
+
+        let mut assets_sql = String::from(
+            "SELECT kind, name, asset_key, COALESCE(path,'')
+             FROM assets WHERE kind IN ('wwise_event','fmod_event')",
+        );
+        let mut asset_params: Vec<String> = Vec::new();
+        if let Some(r) = root {
+            assets_sql.push_str(" AND root = ?");
+            asset_params.push(r.to_string());
+        }
+        let mut astmt = self
+            .store
+            .conn
+            .prepare(&assets_sql)
+            .map_err(|e| e.to_string())?;
+        let arows = astmt
+            .query_map(
+                rusqlite::params_from_iter(asset_params.iter().map(|s| s.as_str())),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        let mut resolved: BTreeMap<String, (String, String, String)> = BTreeMap::new();
+        for row in arows {
+            let (kind, name, key, path) = row.map_err(|e| e.to_string())?;
+            resolved.entry(name).or_insert((kind, key, path));
+        }
+
+        let event_count = groups.len();
+        let usage_count: i64 = groups.values().map(|sites| sites.len() as i64).sum();
+        let resolved_count = groups
+            .keys()
+            .filter(|name| resolved.contains_key(*name))
+            .count();
+        let mut sorted: Vec<(String, Vec<(String, i32, String)>)> = groups.into_iter().collect();
+        sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
+        let events: Vec<Value> = sorted
+            .into_iter()
+            .take(limit)
+            .map(|(name, sites)| {
+                let asset = match resolved.get(&name) {
+                    Some((kind, key, path)) => json!({"key": key, "kind": kind, "path": path}),
+                    None => Value::Null,
+                };
+                let sites_json: Vec<Value> = sites
+                    .iter()
+                    .take(3)
+                    .map(|(path, line, pattern)| {
+                        json!({"path": path, "line": line, "pattern": pattern})
+                    })
+                    .collect();
+                json!({"event": name, "usages": sites.len(), "asset": asset, "sites": sites_json})
+            })
+            .collect();
+        Ok(json!({
+            "event_count": event_count,
+            "usage_count": usage_count,
+            "resolved": resolved_count,
+            "unresolved": event_count - resolved_count,
+            "events": events,
+        }))
     }
 
     fn pipeline_graph(
@@ -1339,5 +1608,73 @@ impl Engine {
             }
         }
         Ok(json!({"tables": tables, "readers": readers, "scanned_files": scanned}))
+    }
+}
+
+/// Extract printf/brace placeholders from a source or translated string.
+/// Sorted and deduplicated so equality is order-insensitive.
+fn placeholders(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            if let Some(rel) = text[i + 1..].find('}') {
+                let inner = &text[i + 1..i + 1 + rel];
+                if !inner.is_empty()
+                    && inner.len() <= 32
+                    && !inner.contains(' ')
+                    && !inner.contains('\n')
+                {
+                    out.push(format!("{{{inner}}}"));
+                }
+                i = i + 1 + rel + 1;
+                continue;
+            }
+            i += 1;
+        } else if bytes[i] == b'%' {
+            let mut j = i + 1;
+            if j < bytes.len() && bytes[j] == b'%' {
+                i += 2;
+                continue;
+            }
+            while j < bytes.len() && j < i + 16 {
+                let b = bytes[j];
+                if b.is_ascii_digit() || matches!(b, b'$' | b'.' | b'-' | b'+' | b' ') {
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            if j < bytes.len() && matches!(bytes[j], b's' | b'd' | b'f' | b'x' | b'X' | b'o' | b'u' | b'c' | b'@')
+            {
+                j += 1;
+                out.push(text[i..j].to_string());
+                i = j;
+                continue;
+            }
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::placeholders;
+
+    #[test]
+    fn placeholder_extraction_is_sorted_deduped_and_typed() {
+        assert_eq!(
+            placeholders("Hi {0}, {name} and %s"),
+            vec!["%s".to_string(), "{0}".to_string(), "{name}".to_string()]
+        );
+        assert_eq!(placeholders("100%% done"), Vec::<String>::new());
+        assert_ne!(placeholders("{0}"), placeholders("{1}"));
+        assert_eq!(placeholders("a %1$s b %1$s"), vec!["%1$s".to_string()]);
     }
 }

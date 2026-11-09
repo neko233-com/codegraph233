@@ -262,6 +262,12 @@ pub const SPECS: &[LangSpec] = &[
         extensions: &[],
         strict: false,
     },
+    LangSpec {
+        id: "localization_csv",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
 ];
 
 pub fn spec(id: &str) -> Option<&'static LangSpec> {

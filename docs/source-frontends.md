@@ -160,11 +160,25 @@ and status metadata, so untranslated and fuzzy strings can be counted and joined
 to design requirements through `@text:`. No translator, fallback chain or
 runtime locale resolution is modeled.
 
+Localization CSV tables are recognized by path: a `.csv` under a directory whose
+lowercased path contains `localization` (for example `Localization/Strings.csv`)
+uses the first column as the key, an optional `SourceString`/`source` column as
+the source text, and every other locale-like column as a language. One
+`localization_entry` is emitted per locale with a language-qualified asset key,
+so the same key can hold several translations in one file. Empty cells are
+untranslated; comment/note/description columns are ignored. UE5 and Unity
+exports that share this shape are read the same way, and quoted cells with
+embedded commas are supported.
+
 `codegraph233 languages` prints the canonical registry (id, backend, extensions,
 strict/dynamic/asset mode). Projects can add custom extension mappings with
 `extra_extensions`, e.g. `{"extra_extensions": {"gd2": "gdscript"}}`; keys are
 lowercased, a leading dot is stripped and targets must be registered ids.
 Custom mappings win over built-in extensions and are bounded to 64 entries.
+Report tools are deliberately token-bounded: `cg233_localization_report`
+returns aggregate counts plus at most `limit` sampled issues, and
+`cg233_audio_events` returns one row per event with at most three call sites,
+so an agent can decide what to open instead of loading every row.
 
 Specify project roots on every MCP call. Roots are directories; excludes match
 directory basenames or root-relative prefixes, **not globs**. Keep caches and
@@ -200,8 +214,11 @@ indexer integration test covering requirements, code `implements` edges, Yarn/In
 jumps and subtitle/video assets. The localization work adds 5 more: four
 frontend tests (PO status, XLIFF state/language, RESX/ARB, malformed input) and
 one indexer integration test covering PO/XLIFF/RESX/ARB entries, untranslated
-counts and a design `@text` link. The full suite
-is 83 tests passing on Windows x64/Rust 1.99. A synthetic 10-file project with
+counts and a design `@text` link. The cost-effective follow-up adds 6 more: two
+code→audio call-scanner tests, one placeholder-extraction test, one
+localization CSV parser test, one `.meta` importer-settings test and one
+indexer integration test covering the QA report and audio event bindings. The full suite
+is 89 tests passing on Windows x64/Rust 1.99. A synthetic 10-file project with
 `languages: ["auto"]`
 was indexed end-to-end (zero parse diagnostics, all 22 frontends enabled), and
 the existing `testdata/multi` fixture re-indexed without regressions in its C#,
@@ -219,7 +236,10 @@ Yarn nodes, subtitle and WebM header) indexed with zero diagnostics, and
 localization project (PO, XLIFF, RESX and ARB plus a `@text` design marker)
 indexed with zero diagnostics, and `cg233_localization_graph` returned 10 assets
 / 7 edges with 2 untranslated strings and the expected `design_text` link over
-MCP stdio. A real
+MCP stdio. The same fixture's `cg233_localization_report` surfaced placeholder
+and overlong issues, and `cg233_audio_events` linked a C# `PostEvent` call to
+the indexed Wwise event. CI runs the locked test/build matrix on Ubuntu,
+Windows and macOS; a `v*` tag triggers the release workflow. A real
 third-party project mixing these new languages was not used
 for this validation. Raw third-party artifacts are not shipped. These checks do
 not establish editor business-source recovery, application acceptance or support

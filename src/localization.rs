@@ -67,7 +67,11 @@ fn push_entry(
     format: &str,
     line: i32,
 ) {
-    let entry_key = format!("asset:{root}:{rel}#localization_entry:{key}");
+    let entry_key = if language.is_empty() {
+        format!("asset:{root}:{rel}#localization_entry:{key}")
+    } else {
+        format!("asset:{root}:{rel}#localization_entry:{key}:{language}")
+    };
     let mut meta = HashMap::new();
     meta.insert("key".into(), key.to_string());
     meta.insert("source".into(), source.to_string());
@@ -643,6 +647,7 @@ pub fn parse(rel: &str, root: &str, lang: &str, data: &[u8]) -> FileParse {
         "localization_xliff" => parse_xliff(rel, root, lang, &text),
         "localization_resx" => parse_resx(rel, root, lang, &text),
         "localization_arb" => parse_arb(rel, root, lang, &text),
+        "localization_csv" => parse_csv(rel, root, lang, &text),
         _ => {
             let mut res = new_res(rel, root, lang);
             res.errors
@@ -650,6 +655,140 @@ pub fn parse(rel: &str, root: &str, lang: &str, data: &[u8]) -> FileParse {
             res
         }
     }
+}
+
+/// Split one CSV record, honoring double quotes and escaped quotes.
+fn csv_cells(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                if quoted && chars.peek() == Some(&'"') {
+                    cur.push('"');
+                    chars.next();
+                } else {
+                    quoted = !quoted;
+                }
+            }
+            ',' if !quoted => out.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out
+}
+
+/// Unity Localization / Unreal CSV export:
+/// `Key,SourceString,en,de` (a source column is optional; every other column
+/// is treated as a locale).
+fn parse_csv(rel: &str, root: &str, lang: &str, text: &str) -> FileParse {
+    let mut res = new_res(rel, root, lang);
+    let mut lines = text
+        .lines()
+        .map(|l| l.trim_start_matches('\u{feff}'))
+        .filter(|l| !l.trim().is_empty());
+    let header = match lines.next() {
+        Some(h) => csv_cells(h),
+        None => {
+            res.errors.push("localization csv is empty".into());
+            return res;
+        }
+    };
+    if header.len() < 2 {
+        res.errors
+            .push("localization csv needs a key column and at least one locale".into());
+        return res;
+    }
+    let mut source_col: Option<usize> = None;
+    let mut locales: Vec<(usize, String)> = Vec::new();
+    for (i, cell) in header.iter().enumerate().skip(1) {
+        let name = cell.trim();
+        let lower = name.to_ascii_lowercase();
+        if lower == "source" || lower == "sourcestring" || lower == "source_string" || lower == "native" {
+            source_col = Some(i);
+            continue;
+        }
+        if lower.is_empty()
+            || lower.contains("comment")
+            || lower.contains("note")
+            || lower.contains("description")
+        {
+            continue;
+        }
+        locales.push((i, name.to_string()));
+    }
+    if locales.is_empty() {
+        res.errors
+            .push("localization csv has no locale columns".into());
+        return res;
+    }
+
+    let mut entries = 0usize;
+    let mut translated = 0usize;
+    let mut untranslated = 0usize;
+    for (line_no, line) in lines.enumerate() {
+        if entries >= MAX_ENTRIES {
+            res.errors.push(format!(
+                "localization csv truncated at {MAX_ENTRIES} entries"
+            ));
+            break;
+        }
+        let cells = csv_cells(line);
+        let key = cells.first().map(|s| s.trim()).unwrap_or("");
+        if key.is_empty() {
+            continue;
+        }
+        let source = source_col
+            .and_then(|i| cells.get(i))
+            .map(|s| s.trim())
+            .unwrap_or("");
+        for (i, locale) in &locales {
+            if entries >= MAX_ENTRIES {
+                break;
+            }
+            let target = cells.get(*i).map(|s| s.trim()).unwrap_or("");
+            let status = if target.is_empty() {
+                untranslated += 1;
+                "untranslated"
+            } else {
+                translated += 1;
+                "translated"
+            };
+            push_entry(
+                &mut res,
+                root,
+                rel,
+                key,
+                source,
+                target,
+                status,
+                locale,
+                "csv",
+                line_no as i32 + 2,
+            );
+            entries += 1;
+        }
+    }
+    if entries == 0 {
+        res.errors
+            .push("localization csv has no usable rows".into());
+    }
+    let mut meta = HashMap::new();
+    meta.insert("format".into(), "csv".to_string());
+    meta.insert("entries".into(), entries.to_string());
+    meta.insert("translated".into(), translated.to_string());
+    meta.insert("untranslated".into(), untranslated.to_string());
+    if let Some(i) = source_col {
+        meta.insert(
+            "source_column".into(),
+            header.get(i).cloned().unwrap_or_default(),
+        );
+    }
+    push_file(&mut res, rel, root, &base_name(rel), meta);
+    res
 }
 
 #[cfg(test)]
@@ -740,5 +879,31 @@ mod tests {
         assert!(fp.errors.iter().any(|e| e.contains("ARB JSON is invalid")));
         assert_eq!(language_from_resx_name("Loc/Strings.fr-CA.resx"), "fr-CA");
         assert_eq!(language_from_resx_name("Loc/Strings.resx"), "");
+    }
+
+    #[test]
+    fn csv_extracts_locales_source_and_quoted_values() {
+        let src = "Key,SourceString,en,de,Comment\nMENU_PLAY,Play,Play,\"Spielen, jetzt\",button\nMENU_QUIT,Quit,Quit,,\n";
+        let fp = parse_csv("Localization/Strings.csv", "app", "localization_csv", src);
+        assert!(fp.errors.is_empty(), "{:?}", fp.errors);
+        let file = fp.assets.iter().find(|a| a.kind == "localization").unwrap();
+        assert_eq!(file.meta.get("entries").map(|s| s.as_str()), Some("4"));
+        assert_eq!(file.meta.get("translated").map(|s| s.as_str()), Some("3"));
+        assert_eq!(file.meta.get("untranslated").map(|s| s.as_str()), Some("1"));
+        let entries = entries(&fp);
+        let de = entries
+            .iter()
+            .find(|a| a.name == "MENU_PLAY" && a.meta["language"] == "de")
+            .unwrap();
+        assert_eq!(de.meta.get("target").map(|s| s.as_str()), Some("Spielen, jetzt"));
+        assert_eq!(de.meta.get("source").map(|s| s.as_str()), Some("Play"));
+        let quit_de = entries
+            .iter()
+            .find(|a| a.name == "MENU_QUIT" && a.meta["language"] == "de")
+            .unwrap();
+        assert_eq!(
+            quit_de.meta.get("status").map(|s| s.as_str()),
+            Some("untranslated")
+        );
     }
 }

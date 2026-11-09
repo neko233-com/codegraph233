@@ -1,4 +1,5 @@
 mod assets;
+mod audio_refs;
 mod binder;
 mod config;
 mod csharp;

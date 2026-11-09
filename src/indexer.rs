@@ -130,6 +130,9 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         "xliff" | "xlf" if f.assets => Some("localization_xliff"),
         "resx" if f.assets => Some("localization_resx"),
         "arb" if f.assets => Some("localization_arb"),
+        "csv" if (f.assets || f.config_tables) && rel.to_ascii_lowercase().contains("localization") => {
+            Some("localization_csv")
+        }
         "xlsx" | "csv" | "tsv" if f.config_tables => Some("config"),
         "json" if f.config_tables => {
             let abs = Path::new(rel);
@@ -249,6 +252,8 @@ fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
                     fp.asset_edges
                         .extend(crate::design_docs::code_markers(&f.rel, &f.root, text));
                 }
+                fp.asset_edges
+                    .extend(crate::audio_refs::scan(&f.rel, &f.root, text));
             }
         }
     }
@@ -315,7 +320,8 @@ fn parse_file_inner(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(data) => crate::design_docs::parse(&f.rel, &f.root, &f.lang, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
-        "localization_po" | "localization_xliff" | "localization_resx" | "localization_arb" => match std::fs::read(&f.abs) {
+        "localization_po" | "localization_xliff" | "localization_resx" | "localization_arb"
+        | "localization_csv" => match std::fs::read(&f.abs) {
             Ok(data) => crate::localization::parse(&f.rel, &f.root, &f.lang, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
@@ -1436,6 +1442,58 @@ mod tests {
             && e.2 == "design_text"
             && e.3 == "MENU_PLAY"));
         drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn localization_report_and_audio_events_are_indexed() {
+        let dir = temp_project("localization-qa");
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#,
+        );
+        write(
+            &dir.join("Loc/Strings.po"),
+            "msgid \"\"\nmsgstr \"\"\n\"Language: de\\n\"\n\nmsgid \"Press {0} to start\"\nmsgstr \"Drücke zum Starten\"\n\nmsgid \"Go\"\nmsgstr \"Dies ist eine viel zu lange Übersetzung für einen kleinen Button\"\n",
+        );
+        write(
+            &dir.join("Wwise/Events.wwu"),
+            r#"<?xml version="1.0"?><WwiseDocument><Event Name="Play_Footstep"/></WwiseDocument>"#,
+        );
+        write(
+            &dir.join("Localization/Strings.csv"),
+            "Key,SourceString,en,de\nMENU_PLAY,Play,Play,Spielen\n",
+        );
+        write(
+            &dir.join("src/Audio.cs"),
+            "class Audio { void Play() { AkSoundEngine.PostEvent(\"Play_Footstep\", this); } }\n",
+        );
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+        let eng = crate::query::Engine::open(&cfg).unwrap();
+
+        let report = eng.localization_report(Some("app"), 50).unwrap();
+        assert!(report["entry_count"].as_i64().unwrap() >= 4);
+        assert!(report["issue_count"].as_i64().unwrap() >= 2);
+        assert!(report["by_kind"]["placeholder_mismatch"].as_i64().unwrap() >= 1);
+        assert!(report["by_kind"]["overlong"].as_i64().unwrap() >= 1);
+        let issues = report["issues"].as_array().unwrap();
+        assert!(issues.iter().any(|i| i["kind"] == "placeholder_mismatch"
+            && i["key"] == "Press {0} to start"));
+        assert!(report["languages"]["de"].as_i64().unwrap() >= 3);
+
+        let events = eng.audio_events(Some("app"), 50).unwrap();
+        assert_eq!(events["event_count"].as_i64().unwrap(), 1);
+        assert_eq!(events["usage_count"].as_i64().unwrap(), 1);
+        assert_eq!(events["resolved"].as_i64().unwrap(), 1);
+        let first = &events["events"][0];
+        assert_eq!(first["event"], "Play_Footstep");
+        assert_eq!(first["asset"]["kind"], "wwise_event");
+        assert_eq!(first["sites"][0]["path"], "src/Audio.cs");
+
+        drop(eng);
         let _ = fs::remove_dir_all(&dir);
     }
 }

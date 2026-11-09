@@ -941,6 +941,16 @@ pub fn parse_meta(rel: &str, root: &str, text: &str) -> FileParse {
     let Some(c) = re.captures(text) else { return res };
     let guid = c[1].to_ascii_lowercase();
     let target = rel.trim_end_matches(".meta").to_string();
+    let mut meta = HashMap::from([
+        ("guid".into(), guid.clone()),
+        ("linked".into(), "1".into()),
+        ("target_path".into(), target.clone()),
+    ]);
+    // Importer blocks are cheap to read and answer "why is this texture huge?"
+    // without decompressing the imported binary.
+    if let Some(importer) = meta_importer(text, &mut meta) {
+        meta.insert("importer".into(), importer);
+    }
     res.assets.push(Asset {
         key: format!("guid:{guid}"),
         root: root.to_string(),
@@ -949,11 +959,7 @@ pub fn parse_meta(rel: &str, root: &str, text: &str) -> FileParse {
         name: base_name(&target),
         unity_id: guid.clone(),
         line: 0,
-        meta: HashMap::from([
-            ("guid".into(), guid.clone()),
-            ("linked".into(), "1".into()),
-            ("target_path".into(), target.clone()),
-        ]),
+        meta,
     });
     res.guid_rows.push(GuidRow {
         guid,
@@ -961,6 +967,66 @@ pub fn parse_meta(rel: &str, root: &str, text: &str) -> FileParse {
         kind: String::new(),
     });
     res
+}
+
+/// Extract the top-level `XxxImporter:` block of a `.meta` file. Only scalar
+/// keys that matter for build size/behaviour are kept.
+fn meta_importer(text: &str, meta: &mut HashMap<String, String>) -> Option<String> {
+    const KEEP: &[&str] = &[
+        "textureType",
+        "maxTextureSize",
+        "textureCompression",
+        "mipmapEnabled",
+        "enableMipMap",
+        "isReadable",
+        "sRGBTexture",
+        "npotScale",
+        "spriteMode",
+        "filterMode",
+        "wrapMode",
+        "anisoLevel",
+        "loadType",
+        "sampleRateSetting",
+        "quality",
+        "forceToMono",
+        "preloadAudioData",
+        "loadInBackground",
+        "compressionFormat",
+        "meshCompression",
+        "animationType",
+        "importAnimation",
+        "importBlendShapes",
+        "materialImportMode",
+    ];
+    let mut importer: Option<String> = None;
+    let mut in_block = false;
+    for line in text.lines() {
+        if !in_block {
+            let trimmed = line.trim_end();
+            if !trimmed.starts_with(' ') && trimmed.ends_with(':') && trimmed.contains("Importer") {
+                importer = Some(trimmed.trim_end_matches(':').to_string());
+                in_block = true;
+            }
+            continue;
+        }
+        if line.is_empty() {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            break;
+        }
+        let t = line.trim_start();
+        if let Some((key, value)) = t.split_once(':') {
+            let key = key.trim();
+            if KEEP.contains(&key) {
+                let value = value.trim();
+                if value.len() <= 80 {
+                    meta.entry(key.to_string()).or_insert_with(|| value.to_string());
+                }
+            }
+        }
+    }
+    importer
 }
 
 pub fn parse_guid_map_file(path: &Path) -> Result<Vec<GuidRow>, String> {
@@ -1096,6 +1162,20 @@ Transform:
         assert_eq!(table.meta["rows"], "3");
         assert_eq!(table.meta["columns"], "5");
         assert_eq!(table.meta["format"], "csv");
+    }
+
+    #[test]
+    fn meta_captures_guid_and_importer_settings() {
+        let text = "fileFormatVersion: 2\nguid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nTextureImporter:\n  textureType: 8\n  maxTextureSize: 2048\n  textureCompression: 1\n  mipmapEnabled: 1\n  platformSettings:\n  - buildTarget: Standalone\n";
+        let res = parse_meta("Assets/Hero.png.meta", "client", text);
+        let guid = res.assets.iter().find(|a| a.kind == "guid_ref").unwrap();
+        assert_eq!(guid.unity_id, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(guid.meta["importer"], "TextureImporter");
+        assert_eq!(guid.meta["maxTextureSize"], "2048");
+        assert_eq!(guid.meta["textureCompression"], "1");
+        assert_eq!(guid.meta["target_path"], "Assets/Hero.png");
+        assert!(!guid.meta.contains_key("platformSettings"));
+        assert_eq!(res.guid_rows[0].path, "Assets/Hero.png");
     }
 }
 

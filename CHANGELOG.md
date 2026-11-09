@@ -2,6 +2,15 @@
 
 ## 0.4.1-dev — unreleased
 
+- Add cost-conscious localization QA and code→audio bindings:
+  `cg233_localization_report` aggregates placeholder mismatches, overlong
+  translations, missing targets and duplicate keys without dumping every row;
+  `cg233_audio_events` scans Wwise `PostEvent` and FMOD `PlayOneShot` call sites
+  and joins them to indexed events. Ingest Localization/UE CSV tables (path
+  contains `localization`, optional `SourceString`, one entry per locale) and
+  copy allowlisted TextureImporter/AudioImporter/ModelImporter settings from
+  `.meta` files. Add GitHub Actions CI (three-platform test/build) and a
+  tag-driven release workflow (29 MCP tools).
 - Index localization text: gettext `.po`/`.pot` entries with context, source,
   target, fuzzy and untranslated status; XLIFF 1.2/2.0 units with source/target
   and `target-language`; .NET `.resx` key/value pairs with filename locale
