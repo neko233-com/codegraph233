@@ -126,6 +126,10 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         "ink" if f.assets => Some("ink_script"),
         "srt" | "vtt" if f.assets => Some("subtitle"),
         "webm" | "mkv" if f.assets => Some("video"),
+        "po" | "pot" if f.assets => Some("localization_po"),
+        "xliff" | "xlf" if f.assets => Some("localization_xliff"),
+        "resx" if f.assets => Some("localization_resx"),
+        "arb" if f.assets => Some("localization_arb"),
         "xlsx" | "csv" | "tsv" if f.config_tables => Some("config"),
         "json" if f.config_tables => {
             let abs = Path::new(rel);
@@ -311,6 +315,10 @@ fn parse_file_inner(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(data) => crate::design_docs::parse(&f.rel, &f.root, &f.lang, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
+        "localization_po" | "localization_xliff" | "localization_resx" | "localization_arb" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::localization::parse(&f.rel, &f.root, &f.lang, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
         "unity_mixer" | "wwise_workunit" | "wwise_project" | "wwise_bank" | "wwise_media"
         | "fmod_project" | "fmod_strings" | "fmod_bank" | "gltf" | "aseprite" | "fbx"
         | "upm_manifest" => match std::fs::read(&f.abs) {
@@ -380,7 +388,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full9";
+const PARSER_VERSION: &str = "0.4.1-full10";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -1349,6 +1357,84 @@ mod tests {
         assert!(edges.iter().any(|e| e.0 == "design:app:REQ-COMBAT"
             && e.1 == "asset:app:src/Combat.cs"
             && e.2 == "design_code"));
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn indexes_localization_text_assets_and_design_text_links() {
+        let dir = temp_project("localization");
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#,
+        );
+        write(
+            &dir.join("docs/Text.md"),
+            "# Text\n@id: REQ-TEXT\n@text: Loc/Strings.po#MENU_PLAY\n",
+        );
+        write(
+            &dir.join("Loc/Strings.po"),
+            "msgid \"\"\nmsgstr \"\"\n\"Language: fr\\n\"\n\nmsgctxt \"MENU_PLAY\"\nmsgid \"Play\"\nmsgstr \"Jouer\"\n\nmsgid \"MENU_QUIT\"\nmsgstr \"\"\n",
+        );
+        write(
+            &dir.join("Loc/Strings.xliff"),
+            r#"<?xml version="1.0"?><xliff version="1.2"><file source-language="en" target-language="de"><body><trans-unit id="MENU_START"><source>Start</source><target>Start</target></trans-unit><trans-unit id="MENU_QUIT" state="needs-translation"><source>Quit</source><target></target></trans-unit></body></file></xliff>"#,
+        );
+        write(
+            &dir.join("Loc/Strings.de.resx"),
+            r#"<root><data name="MENU_HELP" xml:space="preserve"><value>Hilfe</value></data></root>"#,
+        );
+        write(
+            &dir.join("Loc/strings.arb"),
+            r#"{"@@locale":"ja","MENU_HELP":"ヘルプ"}"#,
+        );
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+        let store = Store::open(&cfg.db_path(), false).unwrap();
+        let kinds: Vec<String> = store
+            .conn
+            .prepare("SELECT DISTINCT kind FROM assets")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .flatten()
+            .collect();
+        for kind in ["localization", "localization_entry", "design_requirement"] {
+            assert!(kinds.iter().any(|k| k == kind), "missing {kind}: {kinds:?}");
+        }
+        let entry_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM assets WHERE kind='localization_entry'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(entry_count, 6, "PO 2 + XLIFF 2 + RESX 1 + ARB 1");
+        let untranslated: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM assets WHERE kind='localization_entry'
+                 AND meta LIKE '%\"status\":\"untranslated\"%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(untranslated, 2);
+        let edges: Vec<(String, String, String, String)> = store
+            .conn
+            .prepare("SELECT src, dst, kind, COALESCE(detail,'') FROM asset_edges")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert!(edges.iter().any(|e| e.0 == "design:app:REQ-TEXT"
+            && e.1 == "asset:app:Loc/Strings.po"
+            && e.2 == "design_text"
+            && e.3 == "MENU_PLAY"));
         drop(store);
         let _ = fs::remove_dir_all(&dir);
     }

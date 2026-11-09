@@ -74,6 +74,8 @@ const DESIGN_GRAPH_KINDS: &[&str] = &[
     "video",
 ];
 
+const LOCALIZATION_GRAPH_KINDS: &[&str] = &["localization", "localization_entry", "subtitle"];
+
 impl Engine {
     pub fn open(cfg: &Config) -> Result<Engine, String> {
         let store = Store::open(&cfg.db_path(), false)?;
@@ -514,6 +516,37 @@ impl Engine {
         limit: i64,
     ) -> Result<Value, String> {
         self.pipeline_graph("design", DESIGN_GRAPH_KINDS, root, asset, limit)
+    }
+
+    pub fn localization_graph(
+        &self,
+        root: Option<&str>,
+        asset: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        let mut value =
+            self.pipeline_graph("text", LOCALIZATION_GRAPH_KINDS, root, asset, limit)?;
+        let mut sql = String::from(
+            "SELECT COUNT(*) FROM assets WHERE kind='localization_entry'
+             AND meta LIKE '%\"status\":\"untranslated\"%'",
+        );
+        if root.is_some() {
+            sql.push_str(" AND root = ?1");
+        }
+        let count: i64 = match root {
+            Some(r) => self
+                .store
+                .conn
+                .query_row(&sql, params![r], |row| row.get(0))
+                .map_err(|e| e.to_string())?,
+            None => self
+                .store
+                .conn
+                .query_row(&sql, [], |row| row.get(0))
+                .map_err(|e| e.to_string())?,
+        };
+        value["untranslated"] = json!(count);
+        Ok(value)
     }
 
     fn pipeline_graph(

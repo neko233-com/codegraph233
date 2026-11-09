@@ -2,6 +2,12 @@
 
 ## 0.4.1-dev — unreleased
 
+- Index localization text: gettext `.po`/`.pot` entries with context, source,
+  target, fuzzy and untranslated status; XLIFF 1.2/2.0 units with source/target
+  and `target-language`; .NET `.resx` key/value pairs with filename locale
+  inference; Flutter `.arb` strings with `@@locale`. Add the
+  `cg233_localization_graph` MCP tool (27 total), the `@text:` design-doc marker
+  linking requirements to text keys, and four registry entries.
 - Index design, narrative and media inputs: Markdown design docs with `@id`
   requirements and `@code`/`@asset`/`@audio`/`@video`/`@art`/`@story`/`@value`
   markers (plus `[[...]]` links) become a requirement graph; `@design:`/`@spec:`/

@@ -231,6 +231,30 @@ pub const SPECS: &[LangSpec] = &[
         extensions: &["webm", "mkv"],
         strict: false,
     },
+    LangSpec {
+        id: "localization_po",
+        backend: Backend::Asset,
+        extensions: &["po", "pot"],
+        strict: false,
+    },
+    LangSpec {
+        id: "localization_xliff",
+        backend: Backend::Asset,
+        extensions: &["xliff", "xlf"],
+        strict: false,
+    },
+    LangSpec {
+        id: "localization_resx",
+        backend: Backend::Asset,
+        extensions: &["resx"],
+        strict: false,
+    },
+    LangSpec {
+        id: "localization_arb",
+        backend: Backend::Asset,
+        extensions: &["arb"],
+        strict: false,
+    },
     // Path-based frontends expose no extension of their own.
     LangSpec {
         id: "upm_manifest",

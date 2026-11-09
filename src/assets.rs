@@ -42,6 +42,10 @@ pub fn asset_kind(rel: &str) -> &'static str {
         "yarn" => "yarn_script",
         "ink" => "ink_script",
         "srt" | "vtt" => "subtitle",
+        "po" | "pot" => "localization",
+        "xliff" | "xlf" => "localization",
+        "resx" => "localization",
+        "arb" => "localization",
         "asset" => "scriptable_asset",
         "json" => "json_asset",
         "meta" => "meta",
@@ -62,6 +66,7 @@ pub fn is_asset_ext(rel: &str) -> bool {    let ext = Path::new(rel)
             | "playable" | "asmdef" | "spriteatlas" | "meta" | "wwu" | "wproj" | "bnk" | "wem"
             | "fspro" | "strings" | "bank" | "gltf" | "glb" | "ase" | "aseprite" | "fbx"
             | "md" | "markdown" | "yarn" | "ink" | "srt" | "vtt"
+            | "po" | "pot" | "xliff" | "xlf" | "resx" | "arb"
     )
 }
 

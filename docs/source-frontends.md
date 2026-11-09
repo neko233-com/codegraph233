@@ -44,6 +44,10 @@ frontends remain controlled by project profile/features.
 | `.ink` | Ink knots, stitches, tags, choices and `-> knot` target edges |
 | `.srt`, `.vtt` | Subtitle cue count, duration and first text; no media decoding |
 | `.webm`, `.mkv` | EBML header only: WebM/Matroska container probe; no tracks or payloads |
+| `.po`, `.pot` | gettext PO/POT entries with context, source, target, fuzzy and untranslated status |
+| `.xliff`, `.xlf` | XLIFF 1.2/2.0 units with id/source/target, `target-language` and state |
+| `.resx` | .NET resource `data`/`value` pairs; locale inferred from `Strings.<locale>.resx` |
+| `.arb` | Application Resource Bundle strings with `@@locale`; `@`-prefixed metadata ignored |
 | `Packages/manifest.json`, `packages-lock.json` | Unity UPM package dependency graph |
 
 These are static navigation aids, not complete compilers, type checkers, macro
@@ -133,7 +137,8 @@ ShaderLab asset parser.
 Design and narrative inputs close the loop from planning to implementation.
 Markdown design docs use a small, static marker dialect: `@id: REQ-X` declares a
 requirement, and `@code: path#symbol`, `@asset:`, `@audio:`, `@video:`, `@art:`,
-`@story: path#node`, `@value: table#key` and `@link: REQ-Y` (or `[[REQ-Y]]`)
+`@story: path#node`, `@value: table#key`, `@text: file#key` and `@link: REQ-Y`
+(or `[[REQ-Y]]`)
 become typed `design_*` edges; headings become `design_section` assets. Code
 comments using `@design:`, `@spec:` or `@doc:` emit `implements` edges from the
 source file to the referenced requirement, so a requirement can be traced to
@@ -142,6 +147,18 @@ Yarn and Ink scripts are parsed statically (nodes/knots/tags/options and jump
 targets); scripts are never executed. Subtitles are text-only, and `.webm`/`.mkv`
 inputs are header-level views. Repository docs such as README, CHANGELOG,
 LICENSE and contribution guides are deliberately not indexed as design docs.
+
+Localization inputs are read as static key/status inventories. gettext `.po`/
+`.pot` entries use `msgctxt` (or `msgid`) as the key, `msgstr` as the target and
+`#, fuzzy` as a status; the header entry supplies `Language:`. XLIFF 1.2
+`trans-unit` and XLIFF 2.0 `unit` elements contribute id/source/target, with
+`state="needs-translation"` or an empty target reported as untranslated. `.resx`
+`data`/`value` pairs infer the locale from `Strings.<locale>.resx`; ARB
+`@@locale` supplies it and `@`-prefixed metadata keys are ignored. Every entry
+becomes a `localization_entry` asset with format, language, key, source, target
+and status metadata, so untranslated and fuzzy strings can be counted and joined
+to design requirements through `@text:`. No translator, fallback chain or
+runtime locale resolution is modeled.
 
 `codegraph233 languages` prints the canonical registry (id, backend, extensions,
 strict/dynamic/asset mode). Projects can add custom extension mappings with
@@ -180,8 +197,11 @@ routing, Wwise/FMOD banks, glTF material edges and UPM packages. The
 design/narrative work adds 7 more: six frontend tests (design markers and
 links, Yarn nodes, Ink knots, subtitles, WebM headers, code annotations) and one
 indexer integration test covering requirements, code `implements` edges, Yarn/Ink
-jumps and subtitle/video assets. The full suite
-is 78 tests passing on Windows x64/Rust 1.99. A synthetic 10-file project with
+jumps and subtitle/video assets. The localization work adds 5 more: four
+frontend tests (PO status, XLIFF state/language, RESX/ARB, malformed input) and
+one indexer integration test covering PO/XLIFF/RESX/ARB entries, untranslated
+counts and a design `@text` link. The full suite
+is 83 tests passing on Windows x64/Rust 1.99. A synthetic 10-file project with
 `languages: ["auto"]`
 was indexed end-to-end (zero parse diagnostics, all 22 frontends enabled), and
 the existing `testdata/multi` fixture re-indexed without regressions in its C#,
@@ -195,7 +215,11 @@ glTF scene) indexed with zero diagnostics, and `cg233_audio_graph` /
 synthetic design project (Markdown requirement with `@code`/`@story` markers,
 Yarn nodes, subtitle and WebM header) indexed with zero diagnostics, and
 `cg233_design_graph` returned 9 assets / 12 edges including `implements`,
-`design_code`, `design_story` and `jumps_to` over MCP stdio. A real
+`design_code`, `design_story` and `jumps_to` over MCP stdio. A synthetic
+localization project (PO, XLIFF, RESX and ARB plus a `@text` design marker)
+indexed with zero diagnostics, and `cg233_localization_graph` returned 10 assets
+/ 7 edges with 2 untranslated strings and the expected `design_text` link over
+MCP stdio. A real
 third-party project mixing these new languages was not used
 for this validation. Raw third-party artifacts are not shipped. These checks do
 not establish editor business-source recovery, application acceptance or support

@@ -123,7 +123,7 @@ pub fn parse(rel: &str, root: &str, lang: &str, data: &[u8]) -> FileParse {
 fn is_design_ref(key: &str) -> bool {
     matches!(
         key,
-        "code" | "asset" | "audio" | "video" | "art" | "story" | "value" | "link"
+        "code" | "asset" | "audio" | "video" | "art" | "story" | "value" | "text" | "link"
     )
 }
 

@@ -14,6 +14,7 @@ mod quiet;
 mod powershell_ast;
 mod lexer;
 mod lexer_langs;
+mod localization;
 mod lua_lang;
 mod mcp;
 mod model;
