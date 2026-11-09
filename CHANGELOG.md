@@ -2,6 +2,15 @@
 
 ## 0.4.1-dev — unreleased
 
+- Add Office/PDF document frontends: DOCX heading/paragraph/table metadata with
+  `doc_section` assets, PPTX slides as `doc_slide` assets, PDF version/page
+  count/Info metadata and FlateDecode text literals, and explicit diagnostics for
+  legacy `.doc`/`.ppt`/`.xls` files. Document text is scanned for the same
+  `@code`/`@asset`/`@audio`/`[[REQ-...]]` markers as design docs, so software
+  copyright, patent, legal and publishing material links to source and
+  requirements. Add the `cg233_document_graph` MCP tool and four registry
+  entries (32 MCP tools, 73 registry entries). ZIP/XML and PDF streams are read
+  statically; macros are never executed and there is no OCR.
 - Add CI/build pipeline indexing: Jenkinsfile stages and `sh`/`bat`/`pwsh`
   script references, GitHub Actions jobs/steps/`uses`/`run`, GitLab CI
   jobs/stages, Azure Pipelines stages/jobs/tasks, CircleCI jobs/steps and

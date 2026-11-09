@@ -6,6 +6,7 @@ mod csharp;
 mod ci;
 mod deps;
 mod design_docs;
+mod docs;
 mod engine_assets;
 mod go_lang;
 mod indexer;

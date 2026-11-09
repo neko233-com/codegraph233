@@ -90,6 +90,13 @@ const CI_GRAPH_KINDS: &[&str] = &[
     "ci_target",
 ];
 
+const DOC_GRAPH_KINDS: &[&str] = &[
+    "document",
+    "presentation",
+    "doc_section",
+    "doc_slide",
+];
+
 impl Engine {
     pub fn open(cfg: &Config) -> Result<Engine, String> {
         let store = Store::open(&cfg.db_path(), false)?;
@@ -539,6 +546,15 @@ impl Engine {
         limit: i64,
     ) -> Result<Value, String> {
         self.pipeline_graph("ci", CI_GRAPH_KINDS, root, asset, limit)
+    }
+
+    pub fn document_graph(
+        &self,
+        root: Option<&str>,
+        asset: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        self.pipeline_graph("docs", DOC_GRAPH_KINDS, root, asset, limit)
     }
 
     pub fn localization_graph(

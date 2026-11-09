@@ -132,6 +132,10 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         "uplugin" if f.assets || f.code => Some("ue_plugin"),
         "ini" if f.assets || f.config_tables => Some("ue_config"),
         "uasset" | "umap" if f.assets => Some("ue_asset"),
+        "docx" if f.assets => Some("docx"),
+        "pptx" if f.assets => Some("pptx"),
+        "pdf" if f.assets => Some("pdf"),
+        "doc" | "ppt" | "xls" if f.assets => Some("legacy_office"),
         "tscn" | "tres" if f.assets => Some("godot_scene"),
         "godot" if f.assets || f.config_tables => Some("godot_project"),
         "mixer" if f.assets => Some("unity_mixer"),
@@ -362,6 +366,10 @@ fn parse_file_inner(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(data) => crate::engine_assets::parse_uasset(&f.rel, &f.root, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
+        "docx" | "pptx" | "pdf" | "legacy_office" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::docs::parse(&f.rel, &f.root, &f.lang, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
         "design_doc" | "yarn_script" | "ink_script" | "subtitle" | "video" => match std::fs::read(&f.abs) {
             Ok(data) => crate::design_docs::parse(&f.rel, &f.root, &f.lang, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
@@ -456,7 +464,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full12";
+const PARSER_VERSION: &str = "0.4.1-full13";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -1710,6 +1718,93 @@ mod tests {
         assert!(edges.iter().any(|(src, dst, kind)| src.contains("#ci_target:all:")
             && dst.contains("#ci_target:build:")
             && kind == "depends_on"));
+
+        drop(eng);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn indexes_office_and_pdf_documents() {
+        use std::io::Write as _;
+
+        fn zip_bytes(files: &[(&str, &str)]) -> Vec<u8> {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default();
+            for (name, content) in files {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(content.as_bytes()).unwrap();
+            }
+            writer.finish().unwrap().into_inner()
+        }
+
+        let dir = temp_project("office");
+        fs::write(
+            dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#,
+        )
+        .unwrap();
+        write(&dir.join("src/Player.cs"), "public class Player { public void take_damage() {} }\n");
+        let document = r#"<w:document><w:body>
+<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Claims</w:t></w:r></w:p>
+<w:p><w:r><w:t xml:space="preserve">The invention </w:t></w:r><w:r><w:t>claims @code: src/Player.cs#take_damage and [[REQ-COMBAT]].</w:t></w:r></w:p>
+</w:body></w:document>"#;
+        let core = r#"<cp:coreProperties><dc:title>Patent Draft</dc:title><dc:creator>Neko</dc:creator></cp:coreProperties>"#;
+        let docx = zip_bytes(&[("word/document.xml", document), ("docProps/core.xml", core)]);
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        fs::write(dir.join("docs/Patent.docx"), &docx).unwrap();
+
+        let slide = r#"<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Pitch</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
+        let pptx = zip_bytes(&[("ppt/slides/slide1.xml", slide)]);
+        fs::write(dir.join("docs/Pitch.pptx"), &pptx).unwrap();
+
+        let pdf = "%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n2 0 obj << /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R >> endobj\n4 0 obj << /Type /Page /Parent 2 0 R >> endobj\n5 0 obj << /Title (Manual) /Author (Neko) >> endobj\n6 0 obj << /Length 20 >> stream\nBT (Hello patent) Tj ET\nendstream endobj\n%%EOF\n";
+        fs::write(dir.join("docs/Manual.pdf"), pdf.as_bytes()).unwrap();
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+        let eng = crate::query::Engine::open(&cfg).unwrap();
+
+        let mut stmt = eng
+            .store
+            .conn
+            .prepare("SELECT DISTINCT kind FROM assets WHERE kind IN ('document','presentation','doc_section','doc_slide') ORDER BY kind")
+            .unwrap();
+        let kinds: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap().flatten().collect();
+        drop(stmt);
+        for kind in ["document", "presentation", "doc_section", "doc_slide"] {
+            assert!(kinds.iter().any(|k| k == kind), "missing kind {kind}: {kinds:?}");
+        }
+
+        let mut stmt = eng
+            .store
+            .conn
+            .prepare("SELECT src, dst, kind FROM asset_edges")
+            .unwrap();
+        let edges: Vec<(String, String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        drop(stmt);
+        assert!(edges.iter().any(|(src, dst, kind)| src == "asset:app:docs/Patent.docx"
+            && dst.contains("#doc_section:claims")
+            && kind == "contains"));
+        assert!(edges.iter().any(|(src, dst, kind)| src == "asset:app:docs/Patent.docx"
+            && dst == "asset:app:src/Player.cs"
+            && kind == "design_code"));
+        assert!(edges.iter().any(|(_, dst, kind)| dst == "design:app:REQ-COMBAT" && kind == "design_link"));
+
+        let name: String = eng
+            .store
+            .conn
+            .query_row(
+                "SELECT name FROM assets WHERE path='docs/Manual.pdf'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Manual");
 
         drop(eng);
         let _ = fs::remove_dir_all(&dir);

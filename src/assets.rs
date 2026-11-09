@@ -46,6 +46,8 @@ pub fn asset_kind(rel: &str) -> &'static str {
         "xliff" | "xlf" => "localization",
         "resx" => "localization",
         "arb" => "localization",
+        "docx" | "pdf" | "doc" | "ppt" | "xls" => "document",
+        "pptx" => "presentation",
         "asset" => "scriptable_asset",
         "json" => "json_asset",
         "meta" => "meta",
@@ -67,6 +69,7 @@ pub fn is_asset_ext(rel: &str) -> bool {    let ext = Path::new(rel)
             | "fspro" | "strings" | "bank" | "gltf" | "glb" | "ase" | "aseprite" | "fbx"
             | "md" | "markdown" | "yarn" | "ink" | "srt" | "vtt"
             | "po" | "pot" | "xliff" | "xlf" | "resx" | "arb"
+            | "docx" | "pptx" | "pdf" | "doc" | "ppt" | "xls"
     )
 }
 

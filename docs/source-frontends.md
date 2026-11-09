@@ -49,6 +49,10 @@ frontends remain controlled by project profile/features.
 | `.resx` | .NET resource `data`/`value` pairs; locale inferred from `Strings.<locale>.resx` |
 | `.arb` | Application Resource Bundle strings with `@@locale`; `@`-prefixed metadata ignored |
 | `Packages/manifest.json`, `packages-lock.json` | Unity UPM package dependency graph |
+| `.docx` | Word OOXML: title/author/created, headings as `doc_section`, table count, paragraph text length and the shared `@code`/`@asset`/`@audio`/`[[REQ-...]]` markers; macros, comments and embedded objects are not executed or indexed |
+| `.pptx` | PowerPoint OOXML: first-slide title, one `doc_slide` per slide, run text; layouts, notes, media payloads and SmartArt are not decoded |
+| `.pdf` | PDF 1.x header: version, page count, Info title/author/created and FlateDecode text literals; not OCR, not CMap/embedded-font layout, encrypted or non-Flate streams are skipped |
+| `.doc`, `.ppt`, `.xls` | Legacy binary Office detected and reported with a conversion hint; content is not parsed |
 
 These are static navigation aids, not complete compilers, type checkers, macro
 preprocessors, runtime traces or source recovery tools. Known JNI/Windows
@@ -208,6 +212,20 @@ edges. Script paths are resolved relative to the repository root; unknown
 Makefile prerequisites are not materialized. `cg233_ci_graph` returns the same
 token-bounded `{assets, edges, kinds}` shape as the other pipeline tools.
 
+Office and PDF inputs cover the legal, publishing and software-copyright side of
+game production. DOCX packages read `word/document.xml` and
+`docProps/core.xml`: Heading styles become `doc_section` assets, table count and
+word count are recorded, and the text stream is scanned for the same design
+markers as Markdown, so a patent draft or software-copyright manuscript can link
+to `@code:` modules and `[[REQ-...]]` design requirements. PPTX packages read
+`ppt/slides/slide*.xml` and emit one `doc_slide` per slide with the first run as
+its title. PDF files report version, page count, Info metadata and text literals
+from FlateDecode streams; encrypted documents, scanned images and non-Flate
+filters are not decoded (no OCR). Legacy `.doc`/`.ppt`/`.xls` files produce an
+explicit conversion diagnostic instead of opaque silence. `cg233_document_graph`
+returns the token-bounded document graph, and Excel workbooks keep using the
+existing per-sheet `config_table` frontend.
+
 Specify project roots on every MCP call. Roots are directories; excludes match
 directory basenames or root-relative prefixes, **not globs**. Keep caches and
 third-party inputs ignored. Parser/config changes invalidate old indexes; do
@@ -255,7 +273,11 @@ frontend tests (Jenkins stages and script refs, GitHub Actions
 jobs/steps/actions, GitLab/Azure/CircleCI structure, Makefile target
 dependencies) and one indexer integration test covering all six CI formats,
 asset kinds and the `uses_action`/`uses_stage`/`runs`/`depends_on` edges. The
-full suite is 103 tests passing on Windows x64/Rust 1.99. A synthetic 10-file
+Office/PDF work adds 5 more: four frontend tests (DOCX headings/markers/metadata,
+PPTX slides, PDF pages/title/stream text, malformed PDF and legacy Office) and
+one indexer integration test covering DOCX/PPTX/PDF asset kinds, the document
+`contains` edges and a DOCX `@code` link. The
+full suite is 108 tests passing on Windows x64/Rust 1.99. A synthetic 10-file
 project with `languages: ["auto"]`
 was indexed end-to-end (zero parse diagnostics, all 22 frontends enabled), and
 the existing `testdata/multi` fixture re-indexed without regressions in its C#,
@@ -277,7 +299,11 @@ MCP stdio. The same fixture's `cg233_localization_report` surfaced placeholder
 and overlong issues, and `cg233_audio_events` linked a C# `PostEvent` call to
 the indexed Wwise event. A synthetic CI project (Jenkinsfile, GitHub Actions,
 GitLab CI, Azure Pipelines, CircleCI and Makefile) indexed with zero diagnostics
-and the expected `ci_*` assets and pipeline edges. CI runs the locked test/build matrix on Ubuntu,
+and the expected `ci_*` assets and pipeline edges. A synthetic Office/PDF
+project (DOCX with a heading and `@code`/`[[REQ]]` markers, a PPTX slide and a
+raw PDF) indexed with zero diagnostics; `cg233_document_graph` returned 5 assets
+and 4 edges including `doc_section`, `doc_slide` and `design_code` over MCP
+stdio. CI runs the locked test/build matrix on Ubuntu,
 Windows and macOS; a `v*` tag triggers the release workflow. A real
 third-party project mixing these new languages was not used
 for this validation. Raw third-party artifacts are not shipped. These checks do
