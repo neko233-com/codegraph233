@@ -3,6 +3,7 @@ mod audio_refs;
 mod binder;
 mod config;
 mod csharp;
+mod ci;
 mod deps;
 mod design_docs;
 mod engine_assets;

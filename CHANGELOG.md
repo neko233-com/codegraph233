@@ -2,6 +2,14 @@
 
 ## 0.4.1-dev — unreleased
 
+- Add CI/build pipeline indexing: Jenkinsfile stages and `sh`/`bat`/`pwsh`
+  script references, GitHub Actions jobs/steps/`uses`/`run`, GitLab CI
+  jobs/stages, Azure Pipelines stages/jobs/tasks, CircleCI jobs/steps and
+  Makefile targets/prerequisites become `ci_pipeline`/`ci_stage`/`ci_job`/
+  `ci_step`/`ci_target` assets with `contains`, `uses_stage`, `uses_action`,
+  `runs` and `depends_on` edges. Add the `cg233_ci_graph` MCP tool and six
+  registry entries (31 MCP tools, 69 registry entries). Parsing is line-level
+  and never executes a pipeline.
 - Add relationship-first indexing without new dependencies: dependency
   manifests (npm/Cargo/go.mod/requirements.txt/vcpkg/Conan/NuGet/Maven) become
   `dependency_manifest` assets with deduplicated `depends_on` edges and the

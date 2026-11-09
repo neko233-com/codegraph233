@@ -58,6 +58,32 @@ fn is_repo_doc(rel: &str) -> bool {
     )
 }
 
+fn ci_lang(rel: &str) -> Option<&'static str> {
+    let lower = rel.replace('\\', "/").to_ascii_lowercase();
+    let name = lower.rsplit('/').next().unwrap_or(&lower);
+    if name == "jenkinsfile" || name.starts_with("jenkinsfile.") {
+        return Some("jenkinsfile");
+    }
+    if lower.starts_with(".github/workflows/")
+        && (name.ends_with(".yml") || name.ends_with(".yaml"))
+    {
+        return Some("github_actions");
+    }
+    if name == ".gitlab-ci.yml" {
+        return Some("gitlab_ci");
+    }
+    if name == "azure-pipelines.yml" || name == "azure-pipelines.yaml" {
+        return Some("azure_pipeline");
+    }
+    if lower == ".circleci/config.yml" || lower == ".circleci/config.yaml" {
+        return Some("circleci");
+    }
+    if name == "makefile" || name == "gnumakefile" {
+        return Some("makefile");
+    }
+    None
+}
+
 fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static str> {
     let ext = Path::new(rel)
         .extension()
@@ -67,6 +93,11 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
     if let Some(target) = cfg.extra_extensions.get(&ext) {
         if let Some(spec) = crate::langs::spec(target) {
             return Some(spec.id);
+        }
+    }
+    if f.assets || f.code {
+        if let Some(lang) = ci_lang(rel) {
+            return Some(lang);
         }
     }
     match ext.as_str() {
@@ -335,6 +366,17 @@ fn parse_file_inner(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(data) => crate::design_docs::parse(&f.rel, &f.root, &f.lang, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
+        "jenkinsfile" | "github_actions" | "gitlab_ci" | "azure_pipeline" | "circleci"
+        | "makefile" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::ci::parse(&f.rel, &f.root, &f.lang, &data),
+            Err(e) => FileParse {
+                rel_path: f.rel.clone(),
+                root: f.root.clone(),
+                lang: f.lang.clone(),
+                errors: vec![e.to_string()],
+                ..Default::default()
+            },
+        },
         "localization_po" | "localization_xliff" | "localization_resx" | "localization_arb"
         | "localization_csv" => match std::fs::read(&f.abs) {
             Ok(data) => crate::localization::parse(&f.rel, &f.root, &f.lang, &data),
@@ -414,7 +456,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full11";
+const PARSER_VERSION: &str = "0.4.1-full12";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -1584,6 +1626,90 @@ mod tests {
         assert!(packages
             .iter()
             .any(|p| p["name"] == "phaser" && p["versions"][0] == "3.80.0"));
+
+        drop(eng);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn indexes_ci_pipelines_and_build_graphs() {
+        let dir = temp_project("ci");
+        fs::write(
+            dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"]}"#,
+        )
+        .unwrap();
+        write(
+            &dir.join("Jenkinsfile"),
+            "pipeline {\n  agent any\n  stages {\n    stage('Build') {\n      steps {\n        sh './ci/build.sh'\n      }\n    }\n    stage('Test') {\n      steps {\n        pwsh './tools/test.ps1'\n      }\n    }\n  }\n}\n",
+        );
+        write(
+            &dir.join(".github/workflows/ci.yml"),
+            "name: ci\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: ./ci/build.sh\n  pack:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/upload-artifact@v4\n",
+        );
+        write(
+            &dir.join(".gitlab-ci.yml"),
+            "stages:\n  - build\nimage: rust\nbuild:\n  stage: build\n  script:\n    - cargo build\ntest:\n  stage: build\n  script:\n    - cargo test\n",
+        );
+        write(
+            &dir.join("azure-pipelines.yml"),
+            "trigger:\n  - main\npool:\n  vmImage: ubuntu-latest\nstages:\n  - stage: Build\n    jobs:\n      - job: Compile\n        steps:\n          - script: cargo build\n            displayName: Build\n          - task: PublishBuildArtifacts@1\n",
+        );
+        write(
+            &dir.join(".circleci/config.yml"),
+            "version: 2.1\njobs:\n  build:\n    docker:\n      - image: cimg/rust\n    steps:\n      - checkout\n      - run: cargo test\n",
+        );
+        write(
+            &dir.join("Makefile"),
+            ".PHONY: all build test\nall: build test\nbuild:\n\tcargo build\ntest: build\n\tcargo test\n",
+        );
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+        let eng = crate::query::Engine::open(&cfg).unwrap();
+
+        let mut stmt = eng
+            .store
+            .conn
+            .prepare("SELECT DISTINCT kind FROM assets WHERE kind LIKE 'ci_%' ORDER BY kind")
+            .unwrap();
+        let kinds: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .flatten()
+            .collect();
+        drop(stmt);
+        for kind in ["ci_job", "ci_pipeline", "ci_stage", "ci_step", "ci_target"] {
+            assert!(kinds.iter().any(|k| k == kind), "missing kind {kind}: {kinds:?}");
+        }
+
+        let mut stmt = eng
+            .store
+            .conn
+            .prepare("SELECT src, dst, kind FROM asset_edges")
+            .unwrap();
+        let edges: Vec<(String, String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        drop(stmt);
+        assert!(edges
+            .iter()
+            .any(|(_, dst, kind)| dst == "asset:app:ci/build.sh" && kind == "runs"));
+        assert!(edges
+            .iter()
+            .any(|(_, dst, kind)| dst == "action:actions/checkout@v4" && kind == "uses_action"));
+        assert!(edges.iter().any(|(_, dst, kind)| dst
+            == "action:actions/upload-artifact@v4"
+            && kind == "uses_action"));
+        assert!(edges.iter().any(|(src, dst, kind)| src.contains("#ci_job:build:")
+            && dst.contains("#ci_stage:build")
+            && kind == "uses_stage"));
+        assert!(edges.iter().any(|(src, dst, kind)| src.contains("#ci_target:all:")
+            && dst.contains("#ci_target:build:")
+            && kind == "depends_on"));
 
         drop(eng);
         let _ = fs::remove_dir_all(&dir);

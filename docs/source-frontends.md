@@ -198,6 +198,16 @@ path pattern into a relationship without code: each rule has an `include` glob
 `design:`) are kept verbatim; other targets become `asset:<root>:<path>`. Rules
 are capped at 32, and per-file link output is capped at 64 edges.
 
+CI and build files are parsed line by line without executing anything:
+`Jenkinsfile` stages and `sh`/`bat`/`pwsh` script references, GitHub Actions
+jobs/steps/`uses`/`run`, GitLab CI jobs and stages, Azure Pipelines
+stages/jobs/tasks, CircleCI jobs/steps, and Makefile targets with declared
+prerequisites become `ci_pipeline`/`ci_stage`/`ci_job`/`ci_step`/`ci_target`
+assets with `contains`, `uses_stage`, `uses_action`, `runs` and `depends_on`
+edges. Script paths are resolved relative to the repository root; unknown
+Makefile prerequisites are not materialized. `cg233_ci_graph` returns the same
+token-bounded `{assets, edges, kinds}` shape as the other pipeline tools.
+
 Specify project roots on every MCP call. Roots are directories; excludes match
 directory basenames or root-relative prefixes, **not globs**. Keep caches and
 third-party inputs ignored. Parser/config changes invalidate old indexes; do
@@ -240,9 +250,13 @@ relationship work adds 9 more: three link-rule tests (globs, templates, edge
 targets), four dependency-parser tests (npm, Python/Conan, Cargo/Go/NuGet,
 malformed input), one Markdown doc-link test and one indexer integration test
 covering dependency manifests, a Markdown `doc_link`, a custom `link_rules`
-edge and the `.meta` `imports` edge. The full suite
-is 98 tests passing on Windows x64/Rust 1.99. A synthetic 10-file project with
-`languages: ["auto"]`
+edge and the `.meta` `imports` edge. The CI/build work adds 5 more: four
+frontend tests (Jenkins stages and script refs, GitHub Actions
+jobs/steps/actions, GitLab/Azure/CircleCI structure, Makefile target
+dependencies) and one indexer integration test covering all six CI formats,
+asset kinds and the `uses_action`/`uses_stage`/`runs`/`depends_on` edges. The
+full suite is 103 tests passing on Windows x64/Rust 1.99. A synthetic 10-file
+project with `languages: ["auto"]`
 was indexed end-to-end (zero parse diagnostics, all 22 frontends enabled), and
 the existing `testdata/multi` fixture re-indexed without regressions in its C#,
 Go, Rust, TypeScript, Lua or Unity-asset counts. A separate synthetic UE5/Godot
@@ -261,7 +275,9 @@ indexed with zero diagnostics, and `cg233_localization_graph` returned 10 assets
 / 7 edges with 2 untranslated strings and the expected `design_text` link over
 MCP stdio. The same fixture's `cg233_localization_report` surfaced placeholder
 and overlong issues, and `cg233_audio_events` linked a C# `PostEvent` call to
-the indexed Wwise event. CI runs the locked test/build matrix on Ubuntu,
+the indexed Wwise event. A synthetic CI project (Jenkinsfile, GitHub Actions,
+GitLab CI, Azure Pipelines, CircleCI and Makefile) indexed with zero diagnostics
+and the expected `ci_*` assets and pipeline edges. CI runs the locked test/build matrix on Ubuntu,
 Windows and macOS; a `v*` tag triggers the release workflow. A real
 third-party project mixing these new languages was not used
 for this validation. Raw third-party artifacts are not shipped. These checks do

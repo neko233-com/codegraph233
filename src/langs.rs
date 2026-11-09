@@ -316,6 +316,42 @@ pub const SPECS: &[LangSpec] = &[
         extensions: &[],
         strict: false,
     },
+    LangSpec {
+        id: "jenkinsfile",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "github_actions",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "gitlab_ci",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "azure_pipeline",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "circleci",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "makefile",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
 ];
 
 pub fn spec(id: &str) -> Option<&'static LangSpec> {

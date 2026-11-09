@@ -82,6 +82,14 @@ const DESIGN_GRAPH_KINDS: &[&str] = &[
 
 const LOCALIZATION_GRAPH_KINDS: &[&str] = &["localization", "localization_entry", "subtitle"];
 
+const CI_GRAPH_KINDS: &[&str] = &[
+    "ci_pipeline",
+    "ci_stage",
+    "ci_job",
+    "ci_step",
+    "ci_target",
+];
+
 impl Engine {
     pub fn open(cfg: &Config) -> Result<Engine, String> {
         let store = Store::open(&cfg.db_path(), false)?;
@@ -522,6 +530,15 @@ impl Engine {
         limit: i64,
     ) -> Result<Value, String> {
         self.pipeline_graph("design", DESIGN_GRAPH_KINDS, root, asset, limit)
+    }
+
+    pub fn ci_graph(
+        &self,
+        root: Option<&str>,
+        asset: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        self.pipeline_graph("ci", CI_GRAPH_KINDS, root, asset, limit)
     }
 
     pub fn localization_graph(
