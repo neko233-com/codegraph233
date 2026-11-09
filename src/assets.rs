@@ -951,6 +951,7 @@ pub fn parse_meta(rel: &str, root: &str, text: &str) -> FileParse {
     if let Some(importer) = meta_importer(text, &mut meta) {
         meta.insert("importer".into(), importer);
     }
+    let importer = meta.get("importer").cloned().unwrap_or_default();
     res.assets.push(Asset {
         key: format!("guid:{guid}"),
         root: root.to_string(),
@@ -963,8 +964,18 @@ pub fn parse_meta(rel: &str, root: &str, text: &str) -> FileParse {
     });
     res.guid_rows.push(GuidRow {
         guid,
-        path: target,
+        path: target.clone(),
         kind: String::new(),
+    });
+    // The importer and the imported file are a real relationship (and answer
+    // "which texture/audio settings belong to this asset?").
+    res.asset_edges.push(AssetEdge {
+        src: format!("asset:{root}:{rel}"),
+        dst: format!("asset:{root}:{target}"),
+        kind: "imports".into(),
+        detail: importer,
+        root: root.to_string(),
+        line: 0,
     });
     res
 }

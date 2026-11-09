@@ -268,6 +268,54 @@ pub const SPECS: &[LangSpec] = &[
         extensions: &[],
         strict: false,
     },
+    LangSpec {
+        id: "deps_npm",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "deps_python",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "deps_rust",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "deps_go",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "deps_vcpkg",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "deps_conan",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "deps_dotnet",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
+    LangSpec {
+        id: "deps_java",
+        backend: Backend::Asset,
+        extensions: &[],
+        strict: false,
+    },
 ];
 
 pub fn spec(id: &str) -> Option<&'static LangSpec> {

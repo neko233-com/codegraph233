@@ -133,6 +133,18 @@ fn lang_of(rel: &str, cfg: &Config, config_dirs: &[PathBuf]) -> Option<&'static 
         "csv" if (f.assets || f.config_tables) && rel.to_ascii_lowercase().contains("localization") => {
             Some("localization_csv")
         }
+        "json" if f.assets && rel.to_ascii_lowercase().ends_with("package.json") => Some("deps_npm"),
+        "json" if f.assets && rel.to_ascii_lowercase().ends_with("vcpkg.json") => Some("deps_vcpkg"),
+        "toml" if f.assets && rel.to_ascii_lowercase().ends_with("cargo.toml") => Some("deps_rust"),
+        "mod" if f.assets && rel.to_ascii_lowercase().ends_with("go.mod") => Some("deps_go"),
+        "txt" if f.assets && rel.to_ascii_lowercase().ends_with("requirements.txt") => {
+            Some("deps_python")
+        }
+        "txt" if f.assets && rel.to_ascii_lowercase().ends_with("conanfile.txt") => {
+            Some("deps_conan")
+        }
+        "csproj" if f.assets => Some("deps_dotnet"),
+        "xml" if f.assets && rel.to_ascii_lowercase().ends_with("pom.xml") => Some("deps_java"),
         "xlsx" | "csv" | "tsv" if f.config_tables => Some("config"),
         "json" if f.config_tables => {
             let abs = Path::new(rel);
@@ -257,6 +269,9 @@ fn parse_file(f: &ScanFile, cfg: &Config) -> FileParse {
             }
         }
     }
+    // Declarative path links run for every indexed input, not only code.
+    fp.asset_edges
+        .extend(crate::links::apply(&f.rel, &f.root, &cfg.link_rules));
     fp
 }
 
@@ -331,6 +346,11 @@ fn parse_file_inner(f: &ScanFile, cfg: &Config) -> FileParse {
             Ok(data) => crate::pipeline_assets::parse(&f.rel, &f.root, &f.lang, &data),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
         },
+        "deps_npm" | "deps_python" | "deps_rust" | "deps_go" | "deps_vcpkg" | "deps_conan"
+        | "deps_dotnet" | "deps_java" => match std::fs::read(&f.abs) {
+            Ok(data) => crate::deps::parse(&f.rel, &f.root, &f.lang, &data),
+            Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
+        },
         "prefab" => match std::fs::read_to_string(&f.abs) {
             Ok(text) => assets::parse_prefab(&f.rel, &f.root, &text),
             Err(e) => FileParse { rel_path: f.rel.clone(), root: f.root.clone(), lang: f.lang.clone(), errors: vec![e.to_string()], ..Default::default() },
@@ -394,7 +414,7 @@ fn load_guid_maps(cfg: &Config) -> Vec<crate::model::GuidRow> {
 }
 
 /// Bump when parsers change in a way that must invalidate existing rows.
-const PARSER_VERSION: &str = "0.4.1-full10";
+const PARSER_VERSION: &str = "0.4.1-full11";
 
 pub fn run(cfg: &Config, opts: &Options) -> Result<Stats, String> {
     let started = Instant::now();
@@ -1492,6 +1512,78 @@ mod tests {
         assert_eq!(first["event"], "Play_Footstep");
         assert_eq!(first["asset"]["kind"], "wwise_event");
         assert_eq!(first["sites"][0]["path"], "src/Audio.cs");
+
+        drop(eng);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn indexes_dependency_manifests_doc_links_and_custom_link_rules() {
+        let dir = temp_project("relationships");
+        write(
+            &dir.join(".codegraph233.json"),
+            r#"{"version":1,"profile":"full","roots":[{"key":"app","path":".","role":"frontend"}],"languages":["auto"],"link_rules":[{"include":"Audio/*.wav","kind":"sfx_for","dst":"audio_event:{stem}","detail":"wav"}]}"#,
+        );
+        write(
+            &dir.join("package.json"),
+            r#"{"dependencies":{"phaser":"^3.80.0"},"devDependencies":{"typescript":"~5.4.0"}}"#,
+        );
+        write(
+            &dir.join("Cargo.toml"),
+            "[package]\nname = \"game\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n",
+        );
+        write(&dir.join("requirements.txt"), "requests==2.31.0\n# keep\n");
+        write(
+            &dir.join("Game.csproj"),
+            "<Project><ItemGroup><PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" /><PackageReference Include=\"UnityEngine.Modules\" /></ItemGroup></Project>",
+        );
+        write(&dir.join("docs/Design.md"), "# Design\n\nSee [Spec](specs/Combat.md).\n");
+        write_bytes(
+            &dir.join("Audio/Jump.wav"),
+            b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00",
+        );
+        write(
+            &dir.join("Assets/Hero.png.meta"),
+            "fileFormatVersion: 2\nguid: 0123456789abcdef0123456789abcdef\nTextureImporter:\n  maxTextureSize: 2048\n  textureCompression: 1\n",
+        );
+        write_bytes(
+            &dir.join("Assets/Hero.png"),
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR",
+        );
+
+        let cfg = config::load(&dir).unwrap();
+        let stats = run(&cfg, &opts()).unwrap();
+        assert_eq!(stats.parse_errors, 0);
+        let eng = crate::query::Engine::open(&cfg).unwrap();
+        let mut stmt = eng
+            .store
+            .conn
+            .prepare("SELECT src, dst, kind FROM asset_edges")
+            .unwrap();
+        let edges: Vec<(String, String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        drop(stmt);
+        let edge = |src: &str, dst: &str, kind: &str| {
+            assert!(
+                edges.contains(&(src.to_string(), dst.to_string(), kind.to_string())),
+                "missing {src} -> {dst} ({kind}); have {edges:?}"
+            );
+        };
+        edge("asset:app:package.json", "package:npm:phaser@3.80.0", "depends_on");
+        edge("asset:app:Cargo.toml", "package:cargo:serde@1", "depends_on");
+        edge("asset:app:docs/Design.md", "asset:app:docs/specs/Combat.md", "doc_link");
+        edge("asset:app:Audio/Jump.wav", "audio_event:Jump", "sfx_for");
+        edge("asset:app:Assets/Hero.png.meta", "asset:app:Assets/Hero.png", "imports");
+
+        let deps = eng.dependencies(Some("app"), Some("npm"), 50).unwrap();
+        assert_eq!(deps["package_count"].as_i64().unwrap(), 2);
+        let packages = deps["packages"].as_array().unwrap();
+        assert!(packages
+            .iter()
+            .any(|p| p["name"] == "phaser" && p["versions"][0] == "3.80.0"));
 
         drop(eng);
         let _ = fs::remove_dir_all(&dir);

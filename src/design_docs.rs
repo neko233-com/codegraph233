@@ -194,6 +194,7 @@ fn parse_design_doc(rel: &str, root: &str, text: &str) -> FileParse {
     let mut requirements = 0usize;
     let mut sections = 0usize;
     let mut refs = 0usize;
+    let mut doc_links = 0usize;
     let mut links = HashSet::new();
     let mut requirement_keys = HashSet::new();
     let mut src = doc.clone();
@@ -276,12 +277,34 @@ fn parse_design_doc(rel: &str, root: &str, text: &str) -> FileParse {
             }
             rest = &after[close + 2..];
         }
+        // Normal Markdown links become doc → file relationships, so design
+        // folders, art references and spec cross-links are navigable too.
+        let mut rest: &str = line;
+        while let Some(pos) = rest.find("](") {
+            let after = &rest[pos + 2..];
+            let Some(close) = after.find(')') else { break };
+            let target = after[..close].trim();
+            if let Some(dst_rel) = resolve_doc_target(rel, target) {
+                add_edge(
+                    &mut res,
+                    root,
+                    &doc,
+                    &format!("asset:{root}:{dst_rel}"),
+                    "doc_link",
+                    target,
+                    lineno,
+                );
+                doc_links += 1;
+            }
+            rest = &after[close + 1..];
+        }
     }
 
     meta.insert("title".into(), title.clone());
     meta.insert("sections".into(), sections.to_string());
     meta.insert("requirements".into(), requirements.to_string());
     meta.insert("references".into(), refs.to_string());
+    meta.insert("doc_links".into(), doc_links.to_string());
     meta.insert("links".into(), links.len().to_string());
     push_asset(&mut res, root, doc.clone(), "design_doc", rel, &title, 1, meta);
 
@@ -291,6 +314,55 @@ fn parse_design_doc(rel: &str, root: &str, text: &str) -> FileParse {
             .retain(|a| a.key == doc || (a.kind != "design_requirement"));
     }
     res
+}
+
+fn resolve_doc_target(rel: &str, raw: &str) -> Option<String> {
+    let target = raw.split(['#', '?']).next()?.trim();
+    if target.is_empty() {
+        return None;
+    }
+    let lower = target.to_ascii_lowercase();
+    for prefix in ["http://", "https://", "mailto:", "data:", "javascript:"] {
+        if lower.starts_with(prefix) {
+            return None;
+        }
+    }
+    if lower.starts_with('#') {
+        return None;
+    }
+    let ext = lower.rsplit('.').next()?;
+    if ext == lower || ext.len() > 8 || !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let joined = if let Some(abs) = target.strip_prefix('/') {
+        abs.to_string()
+    } else {
+        let dir = rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        if dir.is_empty() {
+            target.to_string()
+        } else {
+            format!("{dir}/{target}")
+        }
+    };
+    normalize_rel(&joined)
+}
+
+fn normalize_rel(path: &str) -> Option<String> {
+    let mut out: Vec<&str> = Vec::new();
+    for seg in path.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                out.pop()?;
+            }
+            s => out.push(s),
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out.join("/"))
+    }
 }
 
 // -------------------------------------------------------------------- yarn
@@ -750,5 +822,20 @@ mod tests {
         assert_eq!(edges[0].line, 1);
         assert_eq!(edges[1].dst, "design:app:REQ-STATS");
         assert_eq!(edges[1].line, 3);
+    }
+
+    #[test]
+    fn markdown_relative_links_become_doc_links() {
+        let text = "# Design\n\nSee [Spec](specs/Combat.md) and [Hero](../art/hero.png).\n\n[Web](https://example.com/a.md)\n";
+        let fp = parse("docs/Design.md", "app", "design_doc", text.as_bytes());
+        let dst: Vec<&str> = fp
+            .asset_edges
+            .iter()
+            .filter(|e| e.kind == "doc_link")
+            .map(|e| e.dst.as_str())
+            .collect();
+        assert!(dst.contains(&"asset:app:docs/specs/Combat.md"));
+        assert!(dst.contains(&"asset:app:art/hero.png"));
+        assert!(!dst.iter().any(|d| d.contains("example.com")));
     }
 }

@@ -180,6 +180,24 @@ returns aggregate counts plus at most `limit` sampled issues, and
 `cg233_audio_events` returns one row per event with at most three call sites,
 so an agent can decide what to open instead of loading every row.
 
+Repository relationships are also indexed without invoking package managers or
+compilers. Dependency manifests (`package.json`, `Cargo.toml`, `go.mod`,
+`requirements.txt`, `vcpkg.json`, `conanfile.txt`, NuGet `.csproj`,
+Maven `pom.xml`) become one `dependency_manifest` asset plus deduplicated
+`depends_on` edges to `package:<ecosystem>:<name>@<version>`; sections provide
+the edge detail, and malformed manifests are reported as visible errors rather
+than dropped. Relative Markdown links in design docs are resolved against the
+document directory (for example `[Spec](specs/Combat.md)` from
+`docs/Design.md` links `docs/specs/Combat.md`) and emitted as `doc_link` edges;
+http(s), mailto, data, javascript and pure-anchor targets are ignored. A Unity
+`.meta` file now also emits an `imports` edge from the meta file to the imported
+asset, with the importer name in the detail. Finally, `link_rules` turns any
+path pattern into a relationship without code: each rule has an `include` glob
+(`*`, `?`, `**`), a target template over `{stem}`, `{name}`, `{ext}`, `{dir}`,
+`{path}` and `{root}`, and a custom `kind`. Targets with a scheme (such as
+`design:`) are kept verbatim; other targets become `asset:<root>:<path>`. Rules
+are capped at 32, and per-file link output is capped at 64 edges.
+
 Specify project roots on every MCP call. Roots are directories; excludes match
 directory basenames or root-relative prefixes, **not globs**. Keep caches and
 third-party inputs ignored. Parser/config changes invalidate old indexes; do
@@ -217,8 +235,13 @@ one indexer integration test covering PO/XLIFF/RESX/ARB entries, untranslated
 counts and a design `@text` link. The cost-effective follow-up adds 6 more: two
 code→audio call-scanner tests, one placeholder-extraction test, one
 localization CSV parser test, one `.meta` importer-settings test and one
-indexer integration test covering the QA report and audio event bindings. The full suite
-is 89 tests passing on Windows x64/Rust 1.99. A synthetic 10-file project with
+indexer integration test covering the QA report and audio event bindings. The
+relationship work adds 9 more: three link-rule tests (globs, templates, edge
+targets), four dependency-parser tests (npm, Python/Conan, Cargo/Go/NuGet,
+malformed input), one Markdown doc-link test and one indexer integration test
+covering dependency manifests, a Markdown `doc_link`, a custom `link_rules`
+edge and the `.meta` `imports` edge. The full suite
+is 98 tests passing on Windows x64/Rust 1.99. A synthetic 10-file project with
 `languages: ["auto"]`
 was indexed end-to-end (zero parse diagnostics, all 22 frontends enabled), and
 the existing `testdata/multi` fixture re-indexed without regressions in its C#,

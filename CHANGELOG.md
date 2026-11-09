@@ -2,6 +2,13 @@
 
 ## 0.4.1-dev — unreleased
 
+- Add relationship-first indexing without new dependencies: dependency
+  manifests (npm/Cargo/go.mod/requirements.txt/vcpkg/Conan/NuGet/Maven) become
+  `dependency_manifest` assets with deduplicated `depends_on` edges and the
+  `cg233_dependencies` MCP tool; relative Markdown links in design docs become
+  `doc_link` edges; `.meta` files emit `imports` edges to the imported asset;
+  and `link_rules` maps path globs to custom relationship kinds and targets
+  (30 MCP tools, 63 registry entries).
 - Add cost-conscious localization QA and code→audio bindings:
   `cg233_localization_report` aggregates placeholder mismatches, overlong
   translations, missing targets and duplicate keys without dumping every row;

@@ -2,8 +2,13 @@ use crate::config::Config;
 use crate::store::Store;
 use rusqlite::params;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+
+/// One raw call site for an audio event: file path, line and source snippet.
+type AudioSite = (String, i32, String);
+/// Versions plus owning manifests for a dependency package.
+type DependencyGroup = (BTreeSet<String>, BTreeSet<String>);
 
 pub struct Engine {
     pub store: Store,
@@ -731,7 +736,7 @@ impl Engine {
                 },
             )
             .map_err(|e| e.to_string())?;
-        let mut groups: BTreeMap<String, Vec<(String, i32, String)>> = BTreeMap::new();
+        let mut groups: BTreeMap<String, Vec<AudioSite>> = BTreeMap::new();
         for row in rows {
             let (path, line, detail, dst, src) = row.map_err(|e| e.to_string())?;
             let path = if path.is_empty() {
@@ -789,7 +794,7 @@ impl Engine {
             .keys()
             .filter(|name| resolved.contains_key(*name))
             .count();
-        let mut sorted: Vec<(String, Vec<(String, i32, String)>)> = groups.into_iter().collect();
+        let mut sorted: Vec<(String, Vec<AudioSite>)> = groups.into_iter().collect();
         sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
         let events: Vec<Value> = sorted
             .into_iter()
@@ -815,6 +820,102 @@ impl Engine {
             "resolved": resolved_count,
             "unresolved": event_count - resolved_count,
             "events": events,
+        }))
+    }
+
+    /// Declared dependencies across package ecosystems. Aggregated by
+    /// ecosystem/name so duplicate versions and manifest ownership are visible
+    /// without returning one row per dependency declaration.
+    pub fn dependencies(
+        &self,
+        root: Option<&str>,
+        ecosystem: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        let limit = limit.clamp(1, 500) as usize;
+        let mut sql = String::from(
+            "SELECT e.src, e.dst FROM asset_edges e WHERE e.kind='depends_on'",
+        );
+        let mut params_v: Vec<String> = Vec::new();
+        if let Some(r) = root {
+            sql.push_str(" AND e.root = ?");
+            params_v.push(r.to_string());
+        }
+        sql.push_str(" ORDER BY e.dst");
+        let mut stmt = self.store.conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params_v.iter().map(|s| s.as_str())),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .map_err(|e| e.to_string())?;
+        let want_eco = ecosystem.map(|e| e.to_ascii_lowercase());
+        let mut groups: BTreeMap<(String, String), DependencyGroup> = BTreeMap::new();
+        let mut manifests: BTreeSet<String> = BTreeSet::new();
+        for row in rows {
+            let (src, dst) = row.map_err(|e| e.to_string())?;
+            let Some(rest) = dst.strip_prefix("package:") else {
+                continue;
+            };
+            let Some((eco, spec)) = rest.split_once(':') else {
+                continue;
+            };
+            if let Some(want) = &want_eco {
+                if eco != want {
+                    continue;
+                }
+            }
+            let (name, version) = match spec.rsplit_once('@') {
+                Some((name, version)) if !name.is_empty() => {
+                    (name.to_string(), version.to_string())
+                }
+                _ => (spec.to_string(), String::new()),
+            };
+            manifests.insert(src.clone());
+            let entry = groups.entry((eco.to_string(), name)).or_default();
+            if !version.is_empty() {
+                entry.0.insert(version);
+            }
+            entry.1.insert(src);
+        }
+        let package_count = groups.len();
+        let mut sorted: Vec<((String, String), DependencyGroup)> = groups.into_iter().collect();
+        sorted.sort_by(|a, b| {
+            b.1 .1
+                .len()
+                .cmp(&a.1 .1.len())
+                .then(a.0 .0.cmp(&b.0 .0))
+                .then(a.0 .1.cmp(&b.0 .1))
+        });
+        let packages: Vec<Value> = sorted
+            .into_iter()
+            .take(limit)
+            .map(|((eco, name), (versions, manifest_paths))| {
+                let sample: Vec<String> = manifest_paths
+                    .iter()
+                    .take(3)
+                    .map(|key| {
+                        key.strip_prefix("asset:")
+                            .and_then(|rest| rest.split_once(':'))
+                            .map(|(_, path)| path.to_string())
+                            .unwrap_or_else(|| key.clone())
+                    })
+                    .collect();
+                json!({
+                    "ecosystem": eco,
+                    "name": name,
+                    "versions": versions.into_iter().collect::<Vec<_>>(),
+                    "manifest_count": manifest_paths.len(),
+                    "manifests": sample,
+                })
+            })
+            .collect();
+        Ok(json!({
+            "root": root,
+            "ecosystem": ecosystem,
+            "package_count": package_count,
+            "manifest_count": manifests.len(),
+            "packages": packages,
         }))
     }
 

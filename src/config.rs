@@ -55,6 +55,24 @@ pub struct RawConfig {
     /// stable because this participates in the config identity hash.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra_extensions: BTreeMap<String, String>,
+    /// Path-based relationship rules. They let a project link arbitrary inputs
+    /// (audio stems, design folders, naming conventions) without a parser.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_rules: Vec<LinkRule>,
+}
+
+/// One declarative relationship: every indexed path matching `include` gets an
+/// edge to `dst`. `dst` may contain `{stem}`, `{name}`, `{ext}`, `{dir}`,
+/// `{path}` or `{root}`; a value without a scheme is treated as a project path.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct LinkRule {
+    pub include: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub dst: String,
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 pub fn jvm_release() -> u32 { 8 }
@@ -86,6 +104,8 @@ pub struct Config {
     pub features: Features,
     /// Validated, canonical extension overrides.
     pub extra_extensions: BTreeMap<String, String>,
+    /// Validated, bounded path-based relationship rules.
+    pub link_rules: Vec<LinkRule>,
 }
 
 /// Code languages with a dedicated source frontend. `jvm` covers CLASS/JAR
@@ -151,6 +171,7 @@ pub fn load(start: &Path) -> Result<Config, String> {
         });
     }
     let extra_extensions = normalize_extra_extensions(&raw.extra_extensions)?;
+    let link_rules = validate_link_rules(&raw.link_rules)?;
     let features = resolve_features(&raw);
     Ok(Config {
         dir,
@@ -158,6 +179,7 @@ pub fn load(start: &Path) -> Result<Config, String> {
         raw,
         features,
         extra_extensions,
+        link_rules,
     })
 }
 
@@ -190,6 +212,54 @@ fn normalize_extra_extensions(
         out.insert(ext, id.to_string());
     }
     Ok(out)
+}
+
+/// Validate bounded, declarative path-based links. Templates are placeholders
+/// only, so a typo fails at config load instead of silently creating dead edges.
+fn validate_link_rules(rules: &[LinkRule]) -> Result<Vec<LinkRule>, String> {
+    if rules.len() > 32 {
+        return Err("link_rules supports at most 32 rules".into());
+    }
+    for (i, r) in rules.iter().enumerate() {
+        if r.include.is_empty() || r.include.len() > 200 {
+            return Err(format!("link_rules[{i}].include must be 1-200 bytes"));
+        }
+        if r.kind.is_empty()
+            || r.kind.len() > 64
+            || !r
+                .kind
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'))
+        {
+            return Err(format!(
+                "link_rules[{i}].kind must be 1-64 ASCII letters, digits, '_', '-', '.' or ':'"
+            ));
+        }
+        if r.dst.is_empty() || r.dst.len() > 256 {
+            return Err(format!("link_rules[{i}].dst must be 1-256 bytes"));
+        }
+        if r.detail.as_ref().map(|d| d.len() > 80).unwrap_or(false) {
+            return Err(format!("link_rules[{i}].detail must be at most 80 bytes"));
+        }
+        let mut rest = r.dst.as_str();
+        while let Some(open) = rest.find('{') {
+            let after = &rest[open + 1..];
+            let Some(close) = after.find('}') else {
+                return Err(format!("link_rules[{i}].dst has an unclosed placeholder"));
+            };
+            let key = &after[..close];
+            if !matches!(key, "stem" | "name" | "ext" | "dir" | "path" | "root") {
+                return Err(format!(
+                    "link_rules[{i}].dst placeholder {{{key}}} is not one of stem/name/ext/dir/path/root"
+                ));
+            }
+            rest = &after[close + 1..];
+        }
+        if rest.contains('}') {
+            return Err(format!("link_rules[{i}].dst has a stray '}}'"));
+        }
+    }
+    Ok(rules.to_vec())
 }
 
 pub fn resolve_features(raw: &RawConfig) -> Features {
